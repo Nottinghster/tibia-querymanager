@@ -1063,7 +1063,7 @@ void ProcessSetNotationQuery(TConnection *Connection, TReadBuffer *Buffer){
 	}
 
 	// TODO(fusion): Might be `NO_BANISHMENT`.
-	if(!GetCharacterRight(CharacterID, "NOTATION")){
+	if(GetCharacterRight(CharacterID, "NOTATION")){
 		SendQueryStatusError(Connection, 2);
 		return;
 	}
@@ -1225,7 +1225,7 @@ void ProcessBanishIPAddressQuery(TConnection *Connection, TReadBuffer *Buffer){
 	}
 
 	// TODO(fusion): Might be `NO_BANISHMENT`.
-	if(!GetCharacterRight(CharacterID, "IP_BANISHMENT")){
+	if(GetCharacterRight(CharacterID, "IP_BANISHMENT")){
 		SendQueryStatusError(Connection, 2);
 		return;
 	}
