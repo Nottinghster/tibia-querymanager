@@ -173,7 +173,7 @@ bool StringCopy(char *Dest, int DestCapacity, const char *Src){
 
 bool ParseIPAddress(const char *String, int *OutAddr){
 	if(StringEmpty(String)){
-		LOG_ERR("Empty IP Address string");
+		LOG_ERR("Empty IP Address");
 		return false;
 	}
 
@@ -199,6 +199,14 @@ bool ParseIPAddress(const char *String, int *OutAddr){
 	}
 
 	return true;
+}
+
+bool ParseOptionalIPAddress(const char *String, int *OutAddr){
+	if(String == NULL || StringEmpty(String)){
+		return true;
+	}
+
+	return ParseIPAddress(String, OutAddr);
 }
 
 bool ReadBooleanConfig(bool *Dest, const char *Val){
