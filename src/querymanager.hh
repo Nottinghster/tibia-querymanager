@@ -110,7 +110,6 @@ bool StringEqCI(const char *A, const char *B);
 bool StringCopyN(char *Dest, int DestCapacity, const char *Src, int SrcLength);
 bool StringCopy(char *Dest, int DestCapacity, const char *Src);
 bool ParseIPAddress(const char *String, int *OutAddr);
-bool ParseOptionalIPAddress(const char *String, int *OutAddr);
 
 bool ReadBooleanConfig(bool *Dest, const char *Val);
 bool ReadIntegerConfig(int *Dest, const char *Val);

@@ -918,7 +918,7 @@ void ProcessSetNamelockQuery(TConnection *Connection, TReadBuffer *Buffer){
 	Buffer->ReadString(Comment, sizeof(Comment));
 
 	int IPAddress = 0;
-	if(!ParseOptionalIPAddress(IPString, &IPAddress)){
+	if(!StringEmpty(IPString) && !ParseIPAddress(IPString, &IPAddress)){
 		SendQueryStatusFailed(Connection);
 		return;
 	}
@@ -978,7 +978,7 @@ void ProcessBanishAccountQuery(TConnection *Connection, TReadBuffer *Buffer){
 	bool FinalWarning = Buffer->ReadFlag();
 
 	int IPAddress = 0;
-	if(!ParseOptionalIPAddress(IPString, &IPAddress)){
+	if(!StringEmpty(IPString) && !ParseIPAddress(IPString, &IPAddress)){
 		SendQueryStatusFailed(Connection);
 		return;
 	}
@@ -1045,7 +1045,7 @@ void ProcessSetNotationQuery(TConnection *Connection, TReadBuffer *Buffer){
 	Buffer->ReadString(Comment, sizeof(Comment));
 
 	int IPAddress = 0;
-	if(!ParseOptionalIPAddress(IPString, &IPAddress)){
+	if(!StringEmpty(IPString) && !ParseIPAddress(IPString, &IPAddress)){
 		SendQueryStatusFailed(Connection);
 		return;
 	}

@@ -201,14 +201,6 @@ bool ParseIPAddress(const char *String, int *OutAddr){
 	return true;
 }
 
-bool ParseOptionalIPAddress(const char *String, int *OutAddr){
-	if(String == NULL || StringEmpty(String)){
-		return true;
-	}
-
-	return ParseIPAddress(String, OutAddr);
-}
-
 bool ReadBooleanConfig(bool *Dest, const char *Val){
 	ASSERT(Dest && Val);
 	*Dest = StringEqCI(Val, "true");
