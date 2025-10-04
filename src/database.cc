@@ -1227,7 +1227,7 @@ bool FinishHouseAuctions(int WorldID, DynamicArray<THouseAuction> *Auctions){
 	// be an inconvenience but it's not a big problem.
 	sqlite3_stmt *Stmt = PrepareQuery(
 			"DELETE FROM HouseAuctions"
-			" WHERE WorldID = ?1 AND FinishTime != NULL AND FinishTime <= UNIXEPOCH()"
+			" WHERE WorldID = ?1 AND FinishTime IS NOT NULL AND FinishTime <= UNIXEPOCH()"
 			" RETURNING HouseID, BidderID, BidAmount, FinishTime,"
 				" (SELECT Name FROM Characters WHERE CharacterID = BidderID)");
 	if(Stmt == NULL){
@@ -1610,7 +1610,7 @@ bool ExcludeFromAuctions(int WorldID, int CharacterID, int Duration, int Banishm
 	if(sqlite3_bind_int(Stmt, 1, WorldID)      != SQLITE_OK
 	|| sqlite3_bind_int(Stmt, 2, CharacterID)  != SQLITE_OK
 	|| sqlite3_bind_int(Stmt, 3, Duration)     != SQLITE_OK
-	|| sqlite3_bind_int(Stmt, 3, BanishmentID) != SQLITE_OK){
+	|| sqlite3_bind_int(Stmt, 4, BanishmentID) != SQLITE_OK){
 		LOG_ERR("Failed to bind parameters: %s", sqlite3_errmsg(g_Database));
 		return false;
 	}
