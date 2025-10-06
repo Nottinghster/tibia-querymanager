@@ -443,10 +443,10 @@ int main(int argc, const char **argv){
 	}
 
 	atexit(ExitHostCache);
-	atexit(ExitDatabase);
+	atexit(ExitQuery);
 	atexit(ExitConnections);
 	if(!InitHostCache()
-			|| !InitDatabase()
+			|| !InitQuery()
 			|| !InitConnections()){
 		return EXIT_FAILURE;
 	}

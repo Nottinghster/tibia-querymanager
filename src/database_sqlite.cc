@@ -2445,3 +2445,13 @@ void ExitDatabase(void){
 		}
 	}
 }
+
+TDatabase *OpenDatabase(void){
+	//TODO
+	return NULL;
+}
+
+void CloseDatabase(TDatabase *Database){
+	//TODO
+}
+

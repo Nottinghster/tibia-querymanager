@@ -88,7 +88,7 @@ int ListenerAccept(int Listener, uint32 *OutAddr, uint16 *OutPort){
 		uint32 Addr = ntohl(SocketAddr.sin_addr.s_addr);
 		uint16 Port = ntohs(SocketAddr.sin_port);
 		if(Addr != INADDR_LOOPBACK){
-			LOG_ERR("Rejecting remote connection from %08X:%d.", Addr, Port);
+			LOG_ERR("Rejecting remote connection from %08X:%d", Addr, Port);
 			close(Socket);
 			continue;
 		}
@@ -220,7 +220,7 @@ void CheckConnectionInput(TConnection *Connection, int Events){
 		Connection->RWPosition += BytesRead;
 		if(Connection->RWPosition >= ReadSize){
 			if(Connection->RWSize != 0){
-				Connection->State = CONNECTION_PROCESSING;
+				Connection->State = CONNECTION_PENDING_QUERY;
 				Connection->LastActive = g_MonotonicTimeMS;
 				break;
 			}else if(Connection->RWPosition == 2){
@@ -249,9 +249,15 @@ void CheckConnectionInput(TConnection *Connection, int Events){
 			}
 		}
 	}
+}
 
-	if(Connection->State == CONNECTION_PROCESSING){
-		ProcessConnectionQuery(Connection);
+void CheckConnectionQuery(TConnection *Connection){
+	if(Connection->State == CONNECTION_PENDING_QUERY){
+		//ProcessConnectionQuery(Connection);
+	}else if(Connection->State == CONNECTION_PROCESSING_QUERY
+			&& QueryRefCount(Connection->Query) == 1){
+		//
+		//Connection->State = CONNECTION_WRITING;
 	}
 }
 
@@ -355,6 +361,7 @@ void ProcessConnections(void){
 		TConnection *Connection = &g_Connections[ConnectionIndices[i]];
 		int Events = (int)ConnectionFds[i].revents;
 		CheckConnectionInput(Connection, Events);
+		CheckConnectionQuery(Connection);
 		CheckConnectionOutput(Connection, Events);
 		CheckConnection(Connection, Events);
 	}
@@ -419,7 +426,7 @@ void CompoundBanishment(TBanishmentStatus Status, int *Days, bool *FinalWarning)
 }
 
 TWriteBuffer PrepareResponse(TConnection *Connection, int Status){
-	if(Connection->State != CONNECTION_PROCESSING){
+	if(Connection->State != CONNECTION_PROCESSING_QUERY){
 		LOG_ERR("Connection %s is not processing query (State: %d)",
 				Connection->RemoteAddress, Connection->State);
 		CloseConnection(Connection);
@@ -433,7 +440,7 @@ TWriteBuffer PrepareResponse(TConnection *Connection, int Status){
 }
 
 void SendResponse(TConnection *Connection, TWriteBuffer *WriteBuffer){
-	if(Connection->State != CONNECTION_PROCESSING){
+	if(Connection->State != CONNECTION_PROCESSING_QUERY){
 		LOG_ERR("Connection %s is not processing query (State: %d)",
 				Connection->RemoteAddress, Connection->State);
 		CloseConnection(Connection);
@@ -2068,7 +2075,7 @@ void ProcessConnectionQuery(TConnection *Connection){
 	// the disk.
 
 	TReadBuffer Buffer(Connection->Buffer, Connection->RWSize);
-	uint8 Query = Buffer.Read8();
+	int Query = Buffer.Read8();
 	if(!Connection->Authorized){
 		if(Query == QUERY_LOGIN){
 			ProcessLoginQuery(Connection, &Buffer);

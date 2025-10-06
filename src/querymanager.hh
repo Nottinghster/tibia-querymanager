@@ -60,7 +60,7 @@ typedef size_t usize;
 #endif
 
 #define ASSERT_ALWAYS(expr) if(!(expr)) { TRAP(); }
-#if BUILD_DEBUG
+#if ENABLE_ASSERTIONS
 #	define ASSERT(expr) ASSERT_ALWAYS(expr)
 #else
 #	define ASSERT(expr) ((void)(expr))
@@ -116,6 +116,34 @@ bool ReadIntegerConfig(int *Dest, const char *Val);
 bool ReadSizeConfig(int *Dest, const char *Val);
 bool ReadStringConfig(char *Dest, int DestCapacity, const char *Val);
 bool ReadConfig(const char *FileName);
+
+// AtomicInt
+//==============================================================================
+#if COMPILER_GCC || COMPILER_CLANG
+struct AtomicInt{
+	volatile int Value;
+};
+
+inline int AtomicLoad(AtomicInt *Ptr){
+	return __atomic_load_n(&Ptr->Value, __ATOMIC_SEQ_CST);
+}
+
+inline void AtomicStore(AtomicInt *Ptr, int Value){
+	__atomic_store_n(&Ptr->Value, Value, __ATOMIC_SEQ_CST);
+}
+
+inline int AtomicFetchAdd(AtomicInt *Ptr, int Value){
+	return __atomic_fetch_add(&Ptr->Value, Value, __ATOMIC_SEQ_CST);
+}
+
+inline bool AtomicCompareExchange(AtomicInt *Ptr, int *Expected, int Desired){
+	return __atomic_compare_exchange_n(&Ptr->Value, Expected,
+			Desired, false, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST);
+}
+#else
+// TODO(fusion): On MSVC you'd use Interlocked* builtins.
+#	error "Atomics not implemented for compiler."
+#endif
 
 // Buffer Utility
 //==============================================================================
@@ -533,6 +561,33 @@ public:
 	const T *end(void) const { return m_Data + m_Length; }
 };
 
+// hostcache.cc
+//==============================================================================
+bool InitHostCache(void);
+void ExitHostCache(void);
+bool ResolveHostName(const char *HostName, int *OutAddr);
+
+// query.cc
+//==============================================================================
+struct TQuery{
+	AtomicInt RefCount;
+	int QueryType;
+	int WorldID;
+	int BufferSize;
+	uint8 *Buffer;
+	TReadBuffer Request;
+	TWriteBuffer Response;
+};
+
+TQuery *QueryNew(void);
+void QueryDone(TQuery *Query);
+int QueryRefCount(TQuery *Query);
+void QueryEnqueue(TQuery *Query);
+TQuery *QueryDequeue(AtomicInt *Running);
+
+bool InitQuery(void);
+void ExitQuery(void);
+
 // connections.cc
 //==============================================================================
 enum : int {
@@ -592,10 +647,11 @@ enum : int {
 };
 
 enum ConnectionState: int {
-	CONNECTION_FREE			= 0,
-	CONNECTION_READING		= 1,
-	CONNECTION_PROCESSING	= 2,
-	CONNECTION_WRITING		= 3,
+	CONNECTION_FREE					= 0,
+	CONNECTION_READING				= 1,
+	CONNECTION_PENDING_QUERY		= 2,
+	CONNECTION_PROCESSING_QUERY		= 3,
+	CONNECTION_WRITING				= 4,
 };
 
 struct TConnection{
@@ -609,6 +665,7 @@ struct TConnection{
 	int ApplicationType;
 	int WorldID;
 	char RemoteAddress[30];
+	TQuery *Query; // TODO
 };
 
 int ListenerBind(uint16 Port);
@@ -832,7 +889,8 @@ struct TOnlineCharacter{
 	char Profession[30];
 };
 
-// NOTE(fusion): Transaction scope guard.
+struct TDatabase;
+//struct TDatabaseTx;
 struct TransactionScope{
 private:
 	const char *m_Context;
@@ -940,11 +998,8 @@ bool CheckDatabaseSchema(void);
 bool InitDatabase(void);
 void ExitDatabase(void);
 
-// hostcache.cc
-//==============================================================================
-bool InitHostCache(void);
-void ExitHostCache(void);
-bool ResolveHostName(const char *HostName, int *OutAddr);
+TDatabase *OpenDatabase(void);
+void CloseDatabase(TDatabase *Database);
 
 // sha256.cc
 //==============================================================================
