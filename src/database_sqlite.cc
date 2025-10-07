@@ -53,7 +53,7 @@ sqlite3_stmt *PrepareQuery(const char *Text){
 	int LeastRecentlyUsed = 0;
 	int64 LeastRecentlyUsedTime = g_CachedStatements[0].LastUsed;
 	uint32 Hash = HashText(Text);
-	for(int i = 0; i < g_MaxCachedStatements; i += 1){
+	for(int i = 0; i < g_Config.MaxCachedStatements; i += 1){
 		TCachedStatement *Entry = &g_CachedStatements[i];
 
 		if(Entry->LastUsed < LeastRecentlyUsedTime){
@@ -106,13 +106,13 @@ sqlite3_stmt *PrepareQuery(const char *Text){
 bool InitStatementCache(void){
 	ASSERT(g_CachedStatements == NULL);
 	g_CachedStatements = (TCachedStatement*)calloc(
-			g_MaxCachedStatements, sizeof(TCachedStatement));
+			g_Config.MaxCachedStatements, sizeof(TCachedStatement));
 	return true;
 }
 
 void ExitStatementCache(void){
 	if(g_CachedStatements != NULL){
-		for(int i = 0; i < g_MaxCachedStatements; i += 1){
+		for(int i = 0; i < g_Config.MaxCachedStatements; i += 1){
 			TCachedStatement *Entry = &g_CachedStatements[i];
 			if(Entry->Stmt != NULL){
 				sqlite3_finalize(Entry->Stmt);
@@ -215,8 +215,7 @@ bool GetWorlds(DynamicArray<TWorld> *Worlds){
 	AutoStmtReset StmtReset(Stmt);
 	while(sqlite3_step(Stmt) == SQLITE_ROW){
 		TWorld World = {};
-		StringCopy(World.Name, sizeof(World.Name),
-				(const char*)sqlite3_column_text(Stmt, 0));
+		StringBufCopy(World.Name, (const char*)sqlite3_column_text(Stmt, 0));
 		World.Type = sqlite3_column_int(Stmt, 1);
 		World.NumPlayers = sqlite3_column_int(Stmt, 2);
 		World.MaxPlayers = sqlite3_column_int(Stmt, 3);
@@ -399,8 +398,7 @@ bool GetAccountData(int AccountID, TAccount *Account){
 	memset(Account, 0, sizeof(TAccount));
 	if(ErrorCode == SQLITE_ROW){
 		Account->AccountID = sqlite3_column_int(Stmt, 0);
-		StringCopy(Account->Email, sizeof(Account->Email),
-				(const char*)sqlite3_column_text(Stmt, 1));
+		StringBufCopy(Account->Email, (const char*)sqlite3_column_text(Stmt, 1));
 		if(sqlite3_column_bytes(Stmt, 2) == sizeof(Account->Auth)){
 			memcpy(Account->Auth, sqlite3_column_blob(Stmt, 2), sizeof(Account->Auth));
 		}
@@ -517,8 +515,8 @@ bool GetCharacterEndpoints(int AccountID, DynamicArray<TCharacterEndpoint> *Char
 		}
 
 		TCharacterEndpoint Character = {};
-		StringCopy(Character.Name, sizeof(Character.Name), CharacterName);
-		StringCopy(Character.WorldName, sizeof(Character.WorldName), WorldName);
+		StringBufCopy(Character.Name, CharacterName);
+		StringBufCopy(Character.WorldName, WorldName);
 		Character.WorldAddress = WorldAddress;
 		Character.WorldPort = sqlite3_column_int(Stmt, 3);
 		Characters->Push(Character);
@@ -551,13 +549,10 @@ bool GetCharacterSummaries(int AccountID, DynamicArray<TCharacterSummary> *Chara
 
 	while(sqlite3_step(Stmt) == SQLITE_ROW){
 		TCharacterSummary Character = {};
-		StringCopy(Character.Name, sizeof(Character.Name),
-				(const char*)sqlite3_column_text(Stmt, 0));
-		StringCopy(Character.World, sizeof(Character.World),
-				(const char*)sqlite3_column_text(Stmt, 1));
+		StringBufCopy(Character.Name, (const char*)sqlite3_column_text(Stmt, 0));
+		StringBufCopy(Character.World, (const char*)sqlite3_column_text(Stmt, 1));
 		Character.Level = sqlite3_column_int(Stmt, 2);
-		StringCopy(Character.Profession, sizeof(Character.Profession),
-				(const char*)sqlite3_column_text(Stmt, 3));
+		StringBufCopy(Character.Profession, (const char*)sqlite3_column_text(Stmt, 3));
 		Character.Online = (sqlite3_column_int(Stmt, 4) != 0);
 		Character.Deleted = (sqlite3_column_int(Stmt, 5) != 0);
 		Characters->Push(Character);
@@ -677,15 +672,11 @@ bool GetCharacterLoginData(const char *CharacterName, TCharacterLoginData *Chara
 		Character->WorldID = sqlite3_column_int(Stmt, 0);
 		Character->CharacterID = sqlite3_column_int(Stmt, 1);
 		Character->AccountID = sqlite3_column_int(Stmt, 2);
-		StringCopy(Character->Name, sizeof(Character->Name),
-				(const char*)sqlite3_column_text(Stmt, 3));
+		StringBufCopy(Character->Name, (const char*)sqlite3_column_text(Stmt, 3));
 		Character->Sex = sqlite3_column_int(Stmt, 4);
-		StringCopy(Character->Guild, sizeof(Character->Guild),
-				(const char*)sqlite3_column_text(Stmt, 5));
-		StringCopy(Character->Rank, sizeof(Character->Rank),
-				(const char*)sqlite3_column_text(Stmt, 6));
-		StringCopy(Character->Title, sizeof(Character->Title),
-				(const char*)sqlite3_column_text(Stmt, 7));
+		StringBufCopy(Character->Guild, (const char*)sqlite3_column_text(Stmt, 5));
+		StringBufCopy(Character->Rank, (const char*)sqlite3_column_text(Stmt, 6));
+		StringBufCopy(Character->Title, (const char*)sqlite3_column_text(Stmt, 7));
 		Character->Deleted = (sqlite3_column_int(Stmt, 8) != 0);
 	}
 
@@ -724,22 +715,15 @@ bool GetCharacterProfile(const char *CharacterName, TCharacterProfile *Character
 
 	memset(Character, 0, sizeof(TCharacterProfile));
 	if(ErrorCode == SQLITE_ROW){
-		StringCopy(Character->Name, sizeof(Character->Name),
-				(const char*)sqlite3_column_text(Stmt, 0));
-		StringCopy(Character->World, sizeof(Character->World),
-				(const char*)sqlite3_column_text(Stmt, 1));
+		StringBufCopy(Character->Name, (const char*)sqlite3_column_text(Stmt, 0));
+		StringBufCopy(Character->World, (const char*)sqlite3_column_text(Stmt, 1));
 		Character->Sex = sqlite3_column_int(Stmt, 2);
-		StringCopy(Character->Guild, sizeof(Character->Guild),
-				(const char*)sqlite3_column_text(Stmt, 3));
-		StringCopy(Character->Rank, sizeof(Character->Rank),
-				(const char*)sqlite3_column_text(Stmt, 4));
-		StringCopy(Character->Title, sizeof(Character->Title),
-				(const char*)sqlite3_column_text(Stmt, 5));
+		StringBufCopy(Character->Guild, (const char*)sqlite3_column_text(Stmt, 3));
+		StringBufCopy(Character->Rank, (const char*)sqlite3_column_text(Stmt, 4));
+		StringBufCopy(Character->Title, (const char*)sqlite3_column_text(Stmt, 5));
 		Character->Level = sqlite3_column_int(Stmt, 6);
-		StringCopy(Character->Profession, sizeof(Character->Profession),
-				(const char*)sqlite3_column_text(Stmt, 7));
-		StringCopy(Character->Residence, sizeof(Character->Residence),
-				(const char*)sqlite3_column_text(Stmt, 8));
+		StringBufCopy(Character->Profession, (const char*)sqlite3_column_text(Stmt, 7));
+		StringBufCopy(Character->Residence, (const char*)sqlite3_column_text(Stmt, 8));
 		Character->LastLogin = sqlite3_column_int(Stmt, 9);
 		Character->Online = (sqlite3_column_int(Stmt, 10) != 0);
 		Character->Deleted = (sqlite3_column_int(Stmt, 11) != 0);
@@ -792,8 +776,7 @@ bool GetCharacterRights(int CharacterID, DynamicArray<TCharacterRight> *Rights){
 
 	while(sqlite3_step(Stmt) == SQLITE_ROW){
 		TCharacterRight Right = {};
-		StringCopy(Right.Name, sizeof(Right.Name),
-				(const char*)sqlite3_column_text(Stmt, 0));
+		StringBufCopy(Right.Name, (const char*)sqlite3_column_text(Stmt, 0));
 		Rights->Push(Right);
 	}
 
@@ -979,8 +962,7 @@ bool GetCharacterIndexEntries(int WorldID, int MinimumCharacterID,
 	int EntryIndex = 0;
 	while(sqlite3_step(Stmt) == SQLITE_ROW && EntryIndex < MaxEntries){
 		Entries[EntryIndex].CharacterID = sqlite3_column_int(Stmt, 0);
-		StringCopy(Entries[EntryIndex].Name,
-				sizeof(Entries[EntryIndex].Name),
+		StringBufCopy(Entries[EntryIndex].Name,
 				(const char*)sqlite3_column_text(Stmt, 1));
 		EntryIndex += 1;
 	}
@@ -1107,8 +1089,7 @@ bool GetBuddies(int WorldID, int AccountID, DynamicArray<TAccountBuddy> *Buddies
 	while(sqlite3_step(Stmt) == SQLITE_ROW){
 		TAccountBuddy Buddy = {};
 		Buddy.CharacterID = sqlite3_column_int(Stmt, 0);
-		StringCopy(Buddy.Name, sizeof(Buddy.Name),
-				(const char*)sqlite3_column_text(Stmt, 1));
+		StringBufCopy(Buddy.Name, (const char*)sqlite3_column_text(Stmt, 1));
 		Buddies->Push(Buddy);
 	}
 
@@ -1247,8 +1228,7 @@ bool FinishHouseAuctions(int WorldID, DynamicArray<THouseAuction> *Auctions){
 		Auction.BidderID = sqlite3_column_int(Stmt, 1);
 		Auction.BidAmount = sqlite3_column_int(Stmt, 2);
 		Auction.FinishTime = sqlite3_column_int(Stmt, 3);
-		StringCopy(Auction.BidderName, sizeof(Auction.BidderName),
-				(const char*)sqlite3_column_text(Stmt, 4));
+		StringBufCopy(Auction.BidderName, (const char*)sqlite3_column_text(Stmt, 4));
 		Auctions->Push(Auction);
 	}
 
@@ -1284,8 +1264,7 @@ bool FinishHouseTransfers(int WorldID, DynamicArray<THouseTransfer> *Transfers){
 		Transfer.HouseID = sqlite3_column_int(Stmt, 0);
 		Transfer.NewOwnerID = sqlite3_column_int(Stmt, 1);
 		Transfer.Price = sqlite3_column_int(Stmt, 2);
-		StringCopy(Transfer.NewOwnerName, sizeof(Transfer.NewOwnerName),
-				(const char*)sqlite3_column_text(Stmt, 4));
+		StringBufCopy(Transfer.NewOwnerName, (const char*)sqlite3_column_text(Stmt, 4));
 		Transfers->Push(Transfer);
 	}
 
@@ -1464,8 +1443,7 @@ bool GetHouseOwners(int WorldID, DynamicArray<THouseOwner> *Owners){
 		THouseOwner Owner = {};
 		Owner.HouseID = sqlite3_column_int(Stmt, 0);
 		Owner.OwnerID = sqlite3_column_int(Stmt, 1);
-		StringCopy(Owner.OwnerName, sizeof(Owner.OwnerName),
-				(const char*)sqlite3_column_text(Stmt, 2));
+		StringBufCopy(Owner.OwnerName, (const char*)sqlite3_column_text(Stmt, 2));
 		Owner.PaidUntil = sqlite3_column_int(Stmt, 3);
 		Owners->Push(Owner);
 	}
@@ -2023,8 +2001,7 @@ bool GetKillStatistics(int WorldID, DynamicArray<TKillStatistics> *Stats){
 
 	while(sqlite3_step(Stmt) == SQLITE_ROW){
 		TKillStatistics Entry = {};
-		StringCopy(Entry.RaceName, sizeof(Entry.RaceName),
-				(const char*)sqlite3_column_text(Stmt, 0));
+		StringBufCopy(Entry.RaceName, (const char*)sqlite3_column_text(Stmt, 0));
 		Entry.TimesKilled = sqlite3_column_int(Stmt, 1);
 		Entry.PlayersKilled = sqlite3_column_int(Stmt, 2);
 		Stats->Push(Entry);
@@ -2094,11 +2071,9 @@ bool GetOnlineCharacters(int WorldID, DynamicArray<TOnlineCharacter> *Characters
 
 	while(sqlite3_step(Stmt) == SQLITE_ROW){
 		TOnlineCharacter Character = {};
-		StringCopy(Character.Name, sizeof(Character.Name),
-				(const char*)sqlite3_column_text(Stmt, 0));
+		StringBufCopy(Character.Name, (const char*)sqlite3_column_text(Stmt, 0));
 		Character.Level = sqlite3_column_int(Stmt, 1);
-		StringCopy(Character.Profession, sizeof(Character.Profession),
-				(const char*)sqlite3_column_text(Stmt, 2));
+		StringBufCopy(Character.Profession, (const char*)sqlite3_column_text(Stmt, 2));
 		Characters->Push(Character);
 	}
 
@@ -2398,23 +2373,23 @@ bool CheckDatabaseSchema(void){
 }
 
 bool InitDatabase(void){
-	LOG("Database file: \"%s\"", g_DatabaseFile);
-	LOG("Max cached statements: %d", g_MaxCachedStatements);
+	LOG("Database file: \"%s\"", g_Config.DatabaseFile);
+	LOG("Max cached statements: %d", g_Config.MaxCachedStatements);
 
 	int Flags = SQLITE_OPEN_READWRITE
 			| SQLITE_OPEN_CREATE
 			| SQLITE_OPEN_NOMUTEX;
-	if(sqlite3_open_v2(g_DatabaseFile, &g_Database, Flags, NULL) != SQLITE_OK){
+	if(sqlite3_open_v2(g_Config.DatabaseFile, &g_Database, Flags, NULL) != SQLITE_OK){
 		LOG_ERR("Failed to open database at \"%s\": %s\n",
-				g_DatabaseFile, sqlite3_errmsg(g_Database));
+				g_Config.DatabaseFile, sqlite3_errmsg(g_Database));
 		return false;
 	}
 
 	if(sqlite3_db_readonly(g_Database, NULL)){
 		LOG_ERR("Failed to open database file \"%s\" with WRITE PERMISSIONS."
-				" Make sure the file has the appropriate permissions and is"
-				" owned by the same user running the query manager.",
-				g_DatabaseFile);
+				" Make sure it has the appropriate permissions and is owned"
+				" by the same user running the query manager.",
+				g_Config.DatabaseFile);
 		return false;
 	}
 

@@ -9,27 +9,9 @@
 #	error "Operating system not currently supported."
 #endif
 
-// Shutdown Signal
-int  g_ShutdownSignal			= 0;
-
-// Time
-int  g_MonotonicTimeMS			= 0;
-
-// Database Config
-char g_DatabaseFile[1024]		= "tibia.db";
-int  g_MaxCachedStatements		= 100;
-
-// HostCache Config
-int  g_MaxCachedHostNames		= 100;
-int  g_HostNameExpireTime       = 30 * 60 * 1000; // milliseconds
-
-// Connection Config
-int  g_UpdateRate				= 20;
-int  g_QueryManagerPort			= 7174;
-char g_QueryManagerPassword[30]	= "";
-int  g_MaxConnections			= 50;
-int  g_MaxConnectionIdleTime	= 60 * 1000; // milliseconds
-int  g_MaxConnectionPacketSize	= (int)MB(1);
+int     g_ShutdownSignal  = 0;
+int     g_MonotonicTimeMS = 0;
+TConfig g_Config          = {};
 
 void LogAdd(const char *Prefix, const char *Format, ...){
 	char Entry[4096];
@@ -275,7 +257,7 @@ bool ReadStringConfig(char *Dest, int DestCapacity, const char *Val){
 			&Val[ValStart], (ValEnd - ValStart));
 }
 
-bool ReadConfig(const char *FileName){
+bool ReadConfig(const char *FileName, TConfig *Config){
 	FILE *File = fopen(FileName, "rb");
 	if(File == NULL){
 		LOG_ERR("Failed to open config file \"%s\"", FileName);
@@ -361,39 +343,52 @@ bool ReadConfig(const char *FileName){
 
 		// NOTE(fusion): Parse KV pair.
 		char Key[256];
-		if(!StringCopyN(Key, (int)sizeof(Key), &Line[KeyStart], (KeyEnd - KeyStart))){
+		if(!StringBufCopyN(Key, &Line[KeyStart], (KeyEnd - KeyStart))){
 			LOG_WARN("%s:%d: Exceeded key size limit of %d characters",
 					FileName, LineNumber, (int)(sizeof(Key) - 1));
 			continue;
 		}
 
 		char Val[256];
-		if(!StringCopyN(Val, (int)sizeof(Val), &Line[ValStart], (ValEnd - ValStart))){
+		if(!StringBufCopyN(Val, &Line[ValStart], (ValEnd - ValStart))){
 			LOG_WARN("%s:%d: Exceeded value size limit of %d characters",
 					FileName, LineNumber, (int)(sizeof(Val) - 1));
 			continue;
 		}
 
-		if(StringEqCI(Key, "DatabaseFile")){
-			ReadStringConfig(g_DatabaseFile, (int)sizeof(g_DatabaseFile), Val);
-		}else if(StringEqCI(Key, "MaxCachedStatements")){
-			ReadIntegerConfig(&g_MaxCachedStatements, Val);
-		}else if(StringEqCI(Key, "MaxCachedHostNames")){
-			ReadIntegerConfig(&g_MaxCachedHostNames, Val);
+		if(StringEqCI(Key, "MaxCachedHostNames")){
+			ReadIntegerConfig(&Config->MaxCachedHostNames, Val);
 		}else if(StringEqCI(Key, "HostNameExpireTime")){
-			ReadDurationConfig(&g_HostNameExpireTime, Val);
+			ReadDurationConfig(&Config->HostNameExpireTime, Val);
+		}else if(StringEqCI(Key, "MaxCachedStatements")){
+			ReadIntegerConfig(&Config->MaxCachedStatements, Val);
+		}else if(StringEqCI(Key, "DatabaseFile")){
+			ReadStringBufConfig(Config->DatabaseFile, Val);
+		}else if(StringEqCI(Key, "DatabaseHost")){
+			ReadStringBufConfig(Config->DatabaseHost, Val);
+		}else if(StringEqCI(Key, "DatabasePort")){
+			ReadIntegerConfig(&Config->DatabasePort, Val);
+		}else if(StringEqCI(Key, "DatabaseUser")){
+			ReadStringBufConfig(Config->DatabaseUser, Val);
+		}else if(StringEqCI(Key, "DatabasePassword")){
+			ReadStringBufConfig(Config->DatabasePassword, Val);
+		}else if(StringEqCI(Key, "DatabaseName")){
+			ReadStringBufConfig(Config->DatabaseName, Val);
+		}else if(StringEqCI(Key, "DatabaseTLS")){
+			ReadBooleanConfig(&Config->DatabaseTLS, Val);
 		}else if(StringEqCI(Key, "UpdateRate")){
-			ReadIntegerConfig(&g_UpdateRate, Val);
+			ReadIntegerConfig(&Config->UpdateRate, Val);
 		}else if(StringEqCI(Key, "QueryManagerPort")){
-			ReadIntegerConfig(&g_QueryManagerPort, Val);
+			ReadIntegerConfig(&Config->QueryManagerPort, Val);
 		}else if(StringEqCI(Key, "QueryManagerPassword")){
-			ReadStringConfig(g_QueryManagerPassword, (int)sizeof(g_QueryManagerPassword), Val);
+			ReadStringBufConfig(Config->QueryManagerPassword, Val);
+		}else if(StringEqCI(Key, "QueryBufferSize")
+				|| StringEqCI(Key, "MaxConnectionPacketSize")){
+			ReadSizeConfig(&Config->QueryBufferSize, Val);
 		}else if(StringEqCI(Key, "MaxConnections")){
-			ReadIntegerConfig(&g_MaxConnections, Val);
+			ReadIntegerConfig(&Config->MaxConnections, Val);
 		}else if(StringEqCI(Key, "MaxConnectionIdleTime")){
-			ReadDurationConfig(&g_MaxConnectionIdleTime, Val);
-		}else if(StringEqCI(Key, "MaxConnectionPacketSize")){
-			ReadSizeConfig(&g_MaxConnectionPacketSize, Val);
+			ReadDurationConfig(&Config->MaxConnectionIdleTime, Val);
 		}else{
 			LOG_WARN("Unknown config \"%s\"", Key);
 		}
@@ -433,8 +428,30 @@ int main(int argc, const char **argv){
 	int64 StartTime = GetClockMonotonicMS();
 	g_MonotonicTimeMS = 0;
 
-	LOG("Tibia Query Manager v0.1");
-	if(!ReadConfig("config.cfg")){
+	// HostCache Config
+	g_Config.MaxCachedHostNames      = 100;
+	g_Config.HostNameExpireTime   = 30 * 60 * 1000; // milliseconds
+
+	// Database Config
+	g_Config.MaxCachedStatements     = 100;
+	StringBufCopy(g_Config.DatabaseFile, "tibia.db");
+	StringBufCopy(g_Config.DatabaseHost, "localhost");
+	g_Config.DatabasePort            = 5432;
+	StringBufCopy(g_Config.DatabaseUser, "tibia");
+	StringBufCopy(g_Config.DatabasePassword, "");
+	StringBufCopy(g_Config.DatabaseName, "");
+	g_Config.DatabaseTLS             = true;
+
+	// Connection Config
+	g_Config.UpdateRate              = 20;
+	g_Config.QueryManagerPort        = 7174;
+	StringBufCopy(g_Config.QueryManagerPassword, "");
+	g_Config.QueryBufferSize         = (int)MB(1);
+	g_Config.MaxConnections          = 50;
+	g_Config.MaxConnectionIdleTime   = 60 * 1000;      // milliseconds
+
+	LOG("Tibia Query Manager v0.2");
+	if(!ReadConfig("config.cfg", &g_Config)){
 		return EXIT_FAILURE;
 	}
 
@@ -451,8 +468,8 @@ int main(int argc, const char **argv){
 		return EXIT_FAILURE;
 	}
 
-	LOG("Running at %d updates per second...", g_UpdateRate);
-	int64 UpdateInterval = 1000 / (int64)g_UpdateRate;
+	LOG("Running at %d updates per second...", g_Config.UpdateRate);
+	int64 UpdateInterval = 1000 / (int64)g_Config.UpdateRate;
 	while(g_ShutdownSignal == 0){
 		int64 UpdateStart = GetClockMonotonicMS();
 		g_MonotonicTimeMS = (int)(UpdateStart - StartTime);

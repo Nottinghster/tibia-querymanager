@@ -75,24 +75,32 @@ typedef size_t usize;
 		TRAP();																	\
 	}while(0)
 
-// Time
-extern int  g_MonotonicTimeMS;
+struct TConfig{
+	// HostCache Config
+	int  MaxCachedHostNames;
+	int  HostNameExpireTime;
 
-// Database Config
-extern char g_DatabaseFile[1024];
-extern int  g_MaxCachedStatements;
+	// Database Config
+	int  MaxCachedStatements;
+	char DatabaseFile[100];
+	char DatabaseHost[100];
+	int  DatabasePort;
+	char DatabaseUser[30];
+	char DatabasePassword[30];
+	char DatabaseName[30];
+	bool DatabaseTLS;
 
-// HostCache Config
-extern int  g_MaxCachedHostNames;
-extern int  g_HostNameExpireTime;
+	// Connection Config
+	int  UpdateRate;
+	int  QueryManagerPort;
+	char QueryManagerPassword[30];
+	int  QueryBufferSize;
+	int  MaxConnections;
+	int  MaxConnectionIdleTime;
+};
 
-// Connection Config
-extern int  g_UpdateRate;
-extern int  g_QueryManagerPort;
-extern char g_QueryManagerPassword[30];
-extern int  g_MaxConnections;
-extern int  g_MaxConnectionIdleTime;
-extern int  g_MaxConnectionPacketSize;
+extern int     g_MonotonicTimeMS;
+extern TConfig g_Config;
 
 void LogAdd(const char *Prefix, const char *Format, ...) ATTR_PRINTF(2, 3);
 void LogAddVerbose(const char *Prefix, const char *Function,
@@ -115,7 +123,14 @@ bool ReadBooleanConfig(bool *Dest, const char *Val);
 bool ReadIntegerConfig(int *Dest, const char *Val);
 bool ReadSizeConfig(int *Dest, const char *Val);
 bool ReadStringConfig(char *Dest, int DestCapacity, const char *Val);
-bool ReadConfig(const char *FileName);
+bool ReadConfig(const char *FileName, TConfig *Config);
+
+// IMPORTANT(fusion): These macros should only be used when `Dest` is a char array
+// to simplify the call to `StringCopy` where we'd use `sizeof(Dest)` to determine
+// the size of the destination anyways.
+#define StringBufCopy(Dest, Src)             StringCopy(Dest, sizeof(Dest), Src)
+#define StringBufCopyN(Dest, Src, SrcLength) StringCopyN(Dest, sizeof(Dest), Src, SrcLength)
+#define ReadStringBufConfig(Dest, Val)       ReadStringConfig(Dest, sizeof(Dest), Val)
 
 // AtomicInt
 //==============================================================================
@@ -254,6 +269,7 @@ struct TReadBuffer{
 
 	TReadBuffer(uint8 *Buffer, int Size)
 		: Buffer(Buffer), Size(Size), Position(0) {}
+	TReadBuffer(void) : TReadBuffer(NULL, 0) {}
 
 	bool CanRead(int Bytes){
 		return (this->Position + Bytes) <= this->Size;
@@ -338,6 +354,7 @@ struct TWriteBuffer{
 
 	TWriteBuffer(uint8 *Buffer, int Size)
 		: Buffer(Buffer), Size(Size), Position(0) {}
+	TWriteBuffer(void) : TWriteBuffer(NULL, 0) {}
 
 	bool CanWrite(int Bytes){
 		return (this->Position + Bytes) <= this->Size;
@@ -561,175 +578,20 @@ public:
 	const T *end(void) const { return m_Data + m_Length; }
 };
 
+// sha256.cc
+//==============================================================================
+void SHA256(const uint8 *Input, int InputBytes, uint8 *Digest);
+bool TestPassword(const uint8 *Auth, int AuthSize, const char *Password);
+bool GenerateAuth(const char *Password, uint8 *Auth, int AuthSize);
+bool CheckSHA256(void);
+
 // hostcache.cc
 //==============================================================================
 bool InitHostCache(void);
 void ExitHostCache(void);
 bool ResolveHostName(const char *HostName, int *OutAddr);
 
-// query.cc
-//==============================================================================
-struct TQuery{
-	AtomicInt RefCount;
-	int QueryType;
-	int WorldID;
-	int BufferSize;
-	uint8 *Buffer;
-	TReadBuffer Request;
-	TWriteBuffer Response;
-};
-
-TQuery *QueryNew(void);
-void QueryDone(TQuery *Query);
-int QueryRefCount(TQuery *Query);
-void QueryEnqueue(TQuery *Query);
-TQuery *QueryDequeue(AtomicInt *Running);
-
-bool InitQuery(void);
-void ExitQuery(void);
-
-// connections.cc
-//==============================================================================
-enum : int {
-	APPLICATION_TYPE_GAME	= 1,
-	APPLICATION_TYPE_LOGIN	= 2,
-	APPLICATION_TYPE_WEB	= 3,
-};
-
-enum : int {
-	QUERY_STATUS_OK			= 0,
-	QUERY_STATUS_ERROR		= 1,
-	QUERY_STATUS_FAILED		= 3,
-};
-
-enum : int {
-	QUERY_LOGIN						= 0,
-	QUERY_CHECK_ACCOUNT_PASSWORD	= 10,
-	QUERY_LOGIN_ACCOUNT				= 11,
-	QUERY_LOGIN_ADMIN				= 12,
-	QUERY_LOGIN_GAME				= 20,
-	QUERY_LOGOUT_GAME				= 21,
-	QUERY_SET_NAMELOCK				= 23,
-	QUERY_BANISH_ACCOUNT			= 25,
-	QUERY_SET_NOTATION				= 26,
-	QUERY_REPORT_STATEMENT			= 27,
-	QUERY_BANISH_IP_ADDRESS			= 28,
-	QUERY_LOG_CHARACTER_DEATH		= 29,
-	QUERY_ADD_BUDDY					= 30,
-	QUERY_REMOVE_BUDDY				= 31,
-	QUERY_DECREMENT_IS_ONLINE		= 32,
-	QUERY_FINISH_AUCTIONS			= 33,
-	QUERY_TRANSFER_HOUSES			= 35,
-	QUERY_EVICT_FREE_ACCOUNTS		= 36,
-	QUERY_EVICT_DELETED_CHARACTERS	= 37,
-	QUERY_EVICT_EX_GUILDLEADERS		= 38,
-	QUERY_INSERT_HOUSE_OWNER		= 39,
-	QUERY_UPDATE_HOUSE_OWNER		= 40,
-	QUERY_DELETE_HOUSE_OWNER		= 41,
-	QUERY_GET_HOUSE_OWNERS			= 42,
-	QUERY_GET_AUCTIONS				= 43,
-	QUERY_START_AUCTION				= 44,
-	QUERY_INSERT_HOUSES				= 45,
-	QUERY_CLEAR_IS_ONLINE			= 46,
-	QUERY_CREATE_PLAYERLIST			= 47,
-	QUERY_LOG_KILLED_CREATURES		= 48,
-	QUERY_LOAD_PLAYERS				= 50,
-	QUERY_EXCLUDE_FROM_AUCTIONS		= 51,
-	QUERY_CANCEL_HOUSE_TRANSFER		= 52,
-	QUERY_LOAD_WORLD_CONFIG			= 53,
-	QUERY_CREATE_ACCOUNT			= 100,
-	QUERY_CREATE_CHARACTER			= 101,
-	QUERY_GET_ACCOUNT_SUMMARY		= 102,
-	QUERY_GET_CHARACTER_PROFILE		= 103,
-	QUERY_GET_WORLDS				= 150,
-	QUERY_GET_ONLINE_CHARACTERS		= 151,
-	QUERY_GET_KILL_STATISTICS		= 152,
-};
-
-enum ConnectionState: int {
-	CONNECTION_FREE					= 0,
-	CONNECTION_READING				= 1,
-	CONNECTION_PENDING_QUERY		= 2,
-	CONNECTION_PROCESSING_QUERY		= 3,
-	CONNECTION_WRITING				= 4,
-};
-
-struct TConnection{
-	ConnectionState State;
-	int Socket;
-	int LastActive;
-	int RWSize;
-	int RWPosition;
-	uint8 *Buffer;
-	bool Authorized;
-	int ApplicationType;
-	int WorldID;
-	char RemoteAddress[30];
-	TQuery *Query; // TODO
-};
-
-int ListenerBind(uint16 Port);
-int ListenerAccept(int Listener, uint32 *OutAddr, uint16 *OutPort);
-void CloseConnection(TConnection *Connection);
-void EnsureConnectionBuffer(TConnection *Connection);
-void DeleteConnectionBuffer(TConnection *Connection);
-TConnection *AssignConnection(int Socket, uint32 Addr, uint16 Port);
-void ReleaseConnection(TConnection *Connection);
-void CheckConnectionInput(TConnection *Connection, int Events);
-void CheckConnectionOutput(TConnection *Connection, int Events);
-void CheckConnection(TConnection *Connection, int Events);
-void ProcessConnections(void);
-bool InitConnections(void);
-void ExitConnections(void);
-
-TWriteBuffer PrepareResponse(TConnection *Connection, int Status);
-void SendResponse(TConnection *Connection, TWriteBuffer *WriteBuffer);
-void SendQueryStatusOk(TConnection *Connection);
-void SendQueryStatusError(TConnection *Connection, int ErrorCode);
-void SendQueryStatusFailed(TConnection *Connection);
-void ProcessLoginQuery(TConnection *Connection, TReadBuffer *Buffer);
-void ProcessCheckAccountPasswordQuery(TConnection *Connection, TReadBuffer *Buffer);
-void ProcessLoginAccountQuery(TConnection *Connection, TReadBuffer *Buffer);
-void ProcessLoginAdminQuery(TConnection *Connection, TReadBuffer *Buffer);
-void ProcessLoginGameQuery(TConnection *Connection, TReadBuffer *Buffer);
-void ProcessLogoutGameQuery(TConnection *Connection, TReadBuffer *Buffer);
-void ProcessSetNamelockQuery(TConnection *Connection, TReadBuffer *Buffer);
-void ProcessBanishAccountQuery(TConnection *Connection, TReadBuffer *Buffer);
-void ProcessSetNotationQuery(TConnection *Connection, TReadBuffer *Buffer);
-void ProcessReportStatementQuery(TConnection *Connection, TReadBuffer *Buffer);
-void ProcessBanishIPAddressQuery(TConnection *Connection, TReadBuffer *Buffer);
-void ProcessLogCharacterDeathQuery(TConnection *Connection, TReadBuffer *Buffer);
-void ProcessAddBuddyQuery(TConnection *Connection, TReadBuffer *Buffer);
-void ProcessRemoveBuddyQuery(TConnection *Connection, TReadBuffer *Buffer);
-void ProcessDecrementIsOnlineQuery(TConnection *Connection, TReadBuffer *Buffer);
-void ProcessFinishAuctionsQuery(TConnection *Connection, TReadBuffer *Buffer);
-void ProcessTransferHousesQuery(TConnection *Connection, TReadBuffer *Buffer);
-void ProcessEvictFreeAccountsQuery(TConnection *Connection, TReadBuffer *Buffer);
-void ProcessEvictDeletedCharactersQuery(TConnection *Connection, TReadBuffer *Buffer);
-void ProcessEvictExGuildleadersQuery(TConnection *Connection, TReadBuffer *Buffer);
-void ProcessInsertHouseOwnerQuery(TConnection *Connection, TReadBuffer *Buffer);
-void ProcessUpdateHouseOwnerQuery(TConnection *Connection, TReadBuffer *Buffer);
-void ProcessDeleteHouseOwnerQuery(TConnection *Connection, TReadBuffer *Buffer);
-void ProcessGetHouseOwnersQuery(TConnection *Connection, TReadBuffer *Buffer);
-void ProcessGetAuctionsQuery(TConnection *Connection, TReadBuffer *Buffer);
-void ProcessStartAuctionQuery(TConnection *Connection, TReadBuffer *Buffer);
-void ProcessInsertHousesQuery(TConnection *Connection, TReadBuffer *Buffer);
-void ProcessClearIsOnlineQuery(TConnection *Connection, TReadBuffer *Buffer);
-void ProcessCreatePlayerlistQuery(TConnection *Connection, TReadBuffer *Buffer);
-void ProcessLogKilledCreaturesQuery(TConnection *Connection, TReadBuffer *Buffer);
-void ProcessLoadPlayersQuery(TConnection *Connection, TReadBuffer *Buffer);
-void ProcessExcludeFromAuctionsQuery(TConnection *Connection, TReadBuffer *Buffer);
-void ProcessCancelHouseTransferQuery(TConnection *Connection, TReadBuffer *Buffer);
-void ProcessLoadWorldConfigQuery(TConnection *Connection, TReadBuffer *Buffer);
-void ProcessCreateAccountQuery(TConnection *Connection, TReadBuffer *Buffer);
-void ProcessCreateCharacterQuery(TConnection *Connection, TReadBuffer *Buffer);
-void ProcessGetAccountSummaryQuery(TConnection *Connection, TReadBuffer *Buffer);
-void ProcessGetCharacterProfileQuery(TConnection *Connection, TReadBuffer *Buffer);
-void ProcessGetWorldsQuery(TConnection *Connection, TReadBuffer *Buffer);
-void ProcessGetOnlineCharactersQuery(TConnection *Connection, TReadBuffer *Buffer);
-void ProcessConnectionQuery(TConnection *Connection);
-
-// database.cc
+// database*.cc
 //==============================================================================
 struct TWorld{
 	char Name[30];
@@ -1001,11 +863,174 @@ void ExitDatabase(void);
 TDatabase *OpenDatabase(void);
 void CloseDatabase(TDatabase *Database);
 
-// sha256.cc
+// query.cc
 //==============================================================================
-void SHA256(const uint8 *Input, int InputBytes, uint8 *Digest);
-bool TestPassword(const uint8 *Auth, int AuthSize, const char *Password);
-bool GenerateAuth(const char *Password, uint8 *Auth, int AuthSize);
-bool CheckSHA256(void);
+enum : int {
+	QUERY_STATUS_OK			= 0,
+	QUERY_STATUS_ERROR		= 1,
+	QUERY_STATUS_FAILED		= 3,
+};
+
+enum : int {
+	QUERY_LOGIN						= 0,
+	QUERY_INTERNAL_RESOLVE_WORLD	= 1,
+	QUERY_CHECK_ACCOUNT_PASSWORD	= 10,
+	QUERY_LOGIN_ACCOUNT				= 11,
+	QUERY_LOGIN_ADMIN				= 12,
+	QUERY_LOGIN_GAME				= 20,
+	QUERY_LOGOUT_GAME				= 21,
+	QUERY_SET_NAMELOCK				= 23,
+	QUERY_BANISH_ACCOUNT			= 25,
+	QUERY_SET_NOTATION				= 26,
+	QUERY_REPORT_STATEMENT			= 27,
+	QUERY_BANISH_IP_ADDRESS			= 28,
+	QUERY_LOG_CHARACTER_DEATH		= 29,
+	QUERY_ADD_BUDDY					= 30,
+	QUERY_REMOVE_BUDDY				= 31,
+	QUERY_DECREMENT_IS_ONLINE		= 32,
+	QUERY_FINISH_AUCTIONS			= 33,
+	QUERY_TRANSFER_HOUSES			= 35,
+	QUERY_EVICT_FREE_ACCOUNTS		= 36,
+	QUERY_EVICT_DELETED_CHARACTERS	= 37,
+	QUERY_EVICT_EX_GUILDLEADERS		= 38,
+	QUERY_INSERT_HOUSE_OWNER		= 39,
+	QUERY_UPDATE_HOUSE_OWNER		= 40,
+	QUERY_DELETE_HOUSE_OWNER		= 41,
+	QUERY_GET_HOUSE_OWNERS			= 42,
+	QUERY_GET_AUCTIONS				= 43,
+	QUERY_START_AUCTION				= 44,
+	QUERY_INSERT_HOUSES				= 45,
+	QUERY_CLEAR_IS_ONLINE			= 46,
+	QUERY_CREATE_PLAYERLIST			= 47,
+	QUERY_LOG_KILLED_CREATURES		= 48,
+	QUERY_LOAD_PLAYERS				= 50,
+	QUERY_EXCLUDE_FROM_AUCTIONS		= 51,
+	QUERY_CANCEL_HOUSE_TRANSFER		= 52,
+	QUERY_LOAD_WORLD_CONFIG			= 53,
+	QUERY_CREATE_ACCOUNT			= 100,
+	QUERY_CREATE_CHARACTER			= 101,
+	QUERY_GET_ACCOUNT_SUMMARY		= 102,
+	QUERY_GET_CHARACTER_PROFILE		= 103,
+	QUERY_GET_WORLDS				= 150,
+	QUERY_GET_ONLINE_CHARACTERS		= 151,
+	QUERY_GET_KILL_STATISTICS		= 152,
+};
+
+struct TQuery{
+	AtomicInt RefCount;
+	int QueryType;
+	int QueryStatus;
+	int WorldID;
+	int BufferSize;
+	uint8 *Buffer;
+	TReadBuffer Request;
+	TWriteBuffer Response;
+};
+
+TQuery *QueryNew(void);
+void QueryDone(TQuery *Query);
+int QueryRefCount(TQuery *Query);
+void QueryEnqueue(TQuery *Query);
+TQuery *QueryDequeue(AtomicInt *Running);
+bool InitQuery(void);
+void ExitQuery(void);
+
+TWriteBuffer QueryBeginRequest(TQuery *Query, int QueryType);
+bool QueryFinishRequest(TQuery *Query, TWriteBuffer WriteBuffer);
+bool QueryInternalResolveWorld(TQuery *Query, const char *World);
+
+TWriteBuffer *QueryBeginResponse(TQuery *Query, int Status);
+bool QueryFinishResponse(TQuery *Query);
+void QueryOk(TQuery *Query);
+void QueryError(TQuery *Query, int ErrorCode);
+void QueryFailed(TQuery *Query);
+
+void ProcessInternalResolveWorld(TDatabase *Database, TQuery *Query);
+void ProcessCheckAccountPassword(TDatabase *Database, TQuery *Query);
+void ProcessLoginAccount(TDatabase *Database, TQuery *Query);
+void ProcessLoginAdmin(TDatabase *Database, TQuery *Query);
+void ProcessLoginGame(TDatabase *Database, TQuery *Query);
+void ProcessLogoutGame(TDatabase *Database, TQuery *Query);
+void ProcessSetNamelock(TDatabase *Database, TQuery *Query);
+void ProcessBanishAccount(TDatabase *Database, TQuery *Query);
+void ProcessSetNotation(TDatabase *Database, TQuery *Query);
+void ProcessReportStatement(TDatabase *Database, TQuery *Query);
+void ProcessBanishIpAddress(TDatabase *Database, TQuery *Query);
+void ProcessLogCharacterDeath(TDatabase *Database, TQuery *Query);
+void ProcessAddBuddy(TDatabase *Database, TQuery *Query);
+void ProcessRemoveBuddy(TDatabase *Database, TQuery *Query);
+void ProcessDecrementIsOnline(TDatabase *Database, TQuery *Query);
+void ProcessFinishAuctions(TDatabase *Database, TQuery *Query);
+void ProcessTransferHouses(TDatabase *Database, TQuery *Query);
+void ProcessEvictFreeAccounts(TDatabase *Database, TQuery *Query);
+void ProcessEvictDeletedCharacters(TDatabase *Database, TQuery *Query);
+void ProcessEvictExGuildleaders(TDatabase *Database, TQuery *Query);
+void ProcessInsertHouseOwner(TDatabase *Database, TQuery *Query);
+void ProcessUpdateHouseOwner(TDatabase *Database, TQuery *Query);
+void ProcessDeleteHouseOwner(TDatabase *Database, TQuery *Query);
+void ProcessGetHouseOwners(TDatabase *Database, TQuery *Query);
+void ProcessGetAuctions(TDatabase *Database, TQuery *Query);
+void ProcessStartAuction(TDatabase *Database, TQuery *Query);
+void ProcessInsertHouses(TDatabase *Database, TQuery *Query);
+void ProcessClearIsOnline(TDatabase *Database, TQuery *Query);
+void ProcessCreatePlayerlist(TDatabase *Database, TQuery *Query);
+void ProcessLogKilledCreatures(TDatabase *Database, TQuery *Query);
+void ProcessLoadPlayers(TDatabase *Database, TQuery *Query);
+void ProcessExcludeFromAuctions(TDatabase *Database, TQuery *Query);
+void ProcessCancelHouseTransfer(TDatabase *Database, TQuery *Query);
+void ProcessLoadWorldConfig(TDatabase *Database, TQuery *Query);
+void ProcessCreateAccount(TDatabase *Database, TQuery *Query);
+void ProcessCreateCharacter(TDatabase *Database, TQuery *Query);
+void ProcessGetAccountSummary(TDatabase *Database, TQuery *Query);
+void ProcessGetCharacterProfile(TDatabase *Database, TQuery *Query);
+void ProcessGetWorlds(TDatabase *Database, TQuery *Query);
+void ProcessGetOnlineCharacters(TDatabase *Database, TQuery *Query);
+void ProcessGetKillStatistics(TDatabase *Database, TQuery *Query);
+
+// connections.cc
+//==============================================================================
+enum : int {
+	APPLICATION_TYPE_GAME	= 1,
+	APPLICATION_TYPE_LOGIN	= 2,
+	APPLICATION_TYPE_WEB	= 3,
+};
+
+enum ConnectionState: int {
+	CONNECTION_FREE					= 0,
+	CONNECTION_READING				= 1,
+	CONNECTION_REQUEST				= 2,
+	CONNECTION_RESPONSE				= 3,
+	CONNECTION_WRITING				= 4,
+};
+
+struct TConnection{
+	ConnectionState State;
+	int Socket;
+	int LastActive;
+	int RWSize;
+	int RWPosition;
+	bool Authorized;
+	int ApplicationType;
+	TQuery *Query;
+	char RemoteAddress[30];
+};
+
+int ListenerBind(uint16 Port);
+int ListenerAccept(int Listener, uint32 *OutAddr, uint16 *OutPort);
+void CloseConnection(TConnection *Connection);
+TConnection *AssignConnection(int Socket, uint32 Addr, uint16 Port);
+void ReleaseConnection(TConnection *Connection);
+void CheckConnectionInput(TConnection *Connection, int Events);
+void SendQueryResponse(TConnection *Connection);
+void SendQueryOk(TConnection *Connection);
+void SendQueryError(TConnection *Connection, int ErrorCode);
+void SendQueryFailed(TConnection *Connection);
+void CheckConnectionQueryRequest(TConnection *Connection);
+void CheckConnectionQueryResponse(TConnection *Connection);
+void CheckConnectionOutput(TConnection *Connection, int Events);
+void CheckConnection(TConnection *Connection, int Events);
+void ProcessConnections(void);
+bool InitConnections(void);
+void ExitConnections(void);
 
 #endif //TIBIA_QUERYMANAGER_HH_

@@ -18,10 +18,10 @@ static THostCacheEntry *g_CachedHostNames;
 
 bool InitHostCache(void){
 	ASSERT(g_CachedHostNames == NULL);
-	LOG("Max cached host names: %d", g_MaxCachedHostNames);
-	LOG("Host name expire time: %dms", g_HostNameExpireTime);
+	LOG("Max cached host names: %d", g_Config.MaxCachedHostNames);
+	LOG("Host name expire time: %dms", g_Config.HostNameExpireTime);
 	g_CachedHostNames = (THostCacheEntry*)calloc(
-			g_MaxCachedHostNames, sizeof(THostCacheEntry));
+			g_Config.MaxCachedHostNames, sizeof(THostCacheEntry));
 	return true;
 }
 
@@ -64,10 +64,10 @@ bool ResolveHostName(const char *HostName, int *OutAddr){
 	THostCacheEntry *Entry = NULL;
 	int LeastRecentlyUsedIndex = 0;
 	int LeastRecentlyUsedTime = g_CachedHostNames[0].ResolveTime;
-	for(int i = 0; i < g_MaxCachedHostNames; i += 1){
+	for(int i = 0; i < g_Config.MaxCachedHostNames; i += 1){
 		THostCacheEntry *Current = &g_CachedHostNames[i];
 
-		if((g_MonotonicTimeMS - Current->ResolveTime) >= g_HostNameExpireTime){
+		if((g_MonotonicTimeMS - Current->ResolveTime) >= g_Config.HostNameExpireTime){
 			memset(Current, 0, sizeof(THostCacheEntry));
 		}
 
@@ -85,7 +85,7 @@ bool ResolveHostName(const char *HostName, int *OutAddr){
 	if(Entry == NULL){
 		// NOTE(fusion): We also cache failures.
 		Entry = &g_CachedHostNames[LeastRecentlyUsedIndex];
-		if(!StringCopy(Entry->HostName, sizeof(Entry->HostName), HostName)){
+		if(!StringBufCopy(Entry->HostName, HostName)){
 			LOG_WARN("Hostname \"%s\" was improperly cached because it was"
 					" too long (Length: %d, MaxLength: %d)", HostName,
 					(int)strlen(HostName), (int)sizeof(Entry->HostName));
