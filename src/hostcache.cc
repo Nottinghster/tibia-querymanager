@@ -18,8 +18,6 @@ static THostCacheEntry *g_CachedHostNames;
 
 bool InitHostCache(void){
 	ASSERT(g_CachedHostNames == NULL);
-	LOG("Max cached host names: %d", g_Config.MaxCachedHostNames);
-	LOG("Host name expire time: %dms", g_Config.HostNameExpireTime);
 	g_CachedHostNames = (THostCacheEntry*)calloc(
 			g_Config.MaxCachedHostNames, sizeof(THostCacheEntry));
 	return true;

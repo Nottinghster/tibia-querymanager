@@ -244,6 +244,12 @@ void CheckConnectionInput(TConnection *Connection, int Events){
 	}
 }
 
+void ProcessQuery(TConnection *Connection){
+	ASSERT(Connection->Query != NULL);
+	QueryEnqueue(Connection->Query);
+	Connection->State = CONNECTION_RESPONSE;
+}
+
 void SendQueryResponse(TConnection *Connection){
 	ASSERT(Connection->Query != NULL);
 	if(Connection->State != CONNECTION_RESPONSE){
@@ -322,7 +328,7 @@ void CheckConnectionQueryRequest(TConnection *Connection){
 						Connection->RemoteAddress, LoginData);
 				Connection->Authorized = true;
 				Connection->ApplicationType = APPLICATION_TYPE_GAME;
-				QueryEnqueue(Query);
+				ProcessQuery(Connection);
 			}else{
 				// TODO(fusion): This should probably be a PANIC?
 				LOG_ERR("Rejecting connection %s: unable to rewrite login query..."
@@ -377,7 +383,7 @@ void CheckConnectionQueryRequest(TConnection *Connection){
 				|| QueryType == QUERY_EXCLUDE_FROM_AUCTIONS
 				|| QueryType == QUERY_CANCEL_HOUSE_TRANSFER
 				|| QueryType == QUERY_LOAD_WORLD_CONFIG){
-			QueryEnqueue(Connection->Query);
+			ProcessQuery(Connection);
 		}else{
 			LOG_ERR("Unknown GAME query %d from %s",
 					QueryType, Connection->RemoteAddress);
@@ -385,7 +391,7 @@ void CheckConnectionQueryRequest(TConnection *Connection){
 		}
 	}else if(Connection->ApplicationType == APPLICATION_TYPE_LOGIN){
 		if(QueryType == QUERY_LOGIN_ACCOUNT){
-			QueryEnqueue(Connection->Query);
+			ProcessQuery(Connection);
 		}else{
 			LOG_ERR("Unknown LOGIN query %d from %s",
 					QueryType, Connection->RemoteAddress);
@@ -400,7 +406,7 @@ void CheckConnectionQueryRequest(TConnection *Connection){
 				|| QueryType == QUERY_GET_WORLDS
 				|| QueryType == QUERY_GET_ONLINE_CHARACTERS
 				|| QueryType == QUERY_GET_KILL_STATISTICS){
-			QueryEnqueue(Connection->Query);
+			ProcessQuery(Connection);
 		}else{
 			LOG_ERR("Unknown WEB query %d from %s",
 					QueryType, Connection->RemoteAddress);
@@ -554,11 +560,6 @@ void ProcessConnections(void){
 bool InitConnections(void){
 	ASSERT(g_Listener == -1);
 	ASSERT(g_Connections == NULL);
-
-	LOG("Query manager port: %d", g_Config.QueryManagerPort);
-	LOG("Query buffer size: %d", g_Config.QueryBufferSize);
-	LOG("Max connections: %d", g_Config.MaxConnections);
-	LOG("Max connection idle time: %dms", g_Config.MaxConnectionIdleTime);
 
 	g_Listener = ListenerBind((uint16)g_Config.QueryManagerPort);
 	if(g_Listener == -1){

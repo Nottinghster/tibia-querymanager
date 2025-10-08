@@ -2373,9 +2373,6 @@ bool CheckDatabaseSchema(void){
 }
 
 bool InitDatabase(void){
-	LOG("Database file: \"%s\"", g_Config.DatabaseFile);
-	LOG("Max cached statements: %d", g_Config.MaxCachedStatements);
-
 	int Flags = SQLITE_OPEN_READWRITE
 			| SQLITE_OPEN_CREATE
 			| SQLITE_OPEN_NOMUTEX;
@@ -2421,12 +2418,18 @@ void ExitDatabase(void){
 	}
 }
 
-TDatabase *OpenDatabase(void){
+TDatabase *DatabaseOpen(void){
 	//TODO
-	return NULL;
+	//return NULL;
+	return (TDatabase*)1;
 }
 
-void CloseDatabase(TDatabase *Database){
+void DatabaseClose(TDatabase *Database){
 	//TODO
+}
+
+bool DatabaseCheckpoint(TDatabase *Database){
+	//TODO
+	return false;
 }
 

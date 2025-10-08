@@ -2,6 +2,12 @@
 
 #include <pthread.h>
 
+enum : int {
+	WORKER_STATUS_SPAWNING = 0,
+	WORKER_STATUS_ACTIVE,
+	WORKER_STATUS_DONE,
+};
+
 struct TQueryQueue{
 	pthread_mutex_t Mutex;
 	pthread_cond_t WorkAvailable;
@@ -14,245 +20,13 @@ struct TQueryQueue{
 
 struct TWorker{
 	int WorkerID;
-	AtomicInt Running;
+	AtomicInt Status;
+	AtomicInt Stop;
 	pthread_t Thread;
 };
 
-static int g_NumWorkers;
 static TWorker *g_Workers;
 static TQueryQueue *g_QueryQueue;
-
-// Query Queue and Workers
-//==============================================================================
-TQuery *QueryNew(void){
-	TQuery *Query = (TQuery*)calloc(1, sizeof(TQuery));
-	AtomicStore(&Query->RefCount, 1);
-	Query->BufferSize = g_Config.QueryBufferSize;
-	Query->Buffer = (uint8*)calloc(1, Query->BufferSize);
-	Query->Request = TReadBuffer{};
-	Query->Response = TWriteBuffer{};
-	return Query;
-}
-
-void QueryDone(TQuery *Query){
-	if(Query != NULL){
-		int RefCount = AtomicFetchAdd(&Query->RefCount, -1);
-		ASSERT(RefCount >= 1);
-		if(RefCount == 1){
-			free(Query->Buffer);
-			free(Query);
-		}
-	}
-}
-
-int QueryRefCount(TQuery *Query){
-	return AtomicLoad(&Query->RefCount);
-}
-
-void QueryEnqueue(TQuery *Query){
-	ASSERT(g_QueryQueue != NULL);
-	ASSERT(Query != NULL);
-
-	// IMPORTANT(fusion): A query object should be referenced by a connection
-	// and a query queue/worker at most. Anything else, we're gonna have a bad
-	// time.
-	int RefCount = 1;
-	if(!AtomicCompareExchange(&Query->RefCount, &RefCount, 2)){
-		LOG_ERR("Query already have %d references", RefCount);
-		return;
-	}
-
-	pthread_mutex_lock(&g_QueryQueue->Mutex);
-	uint32 NumQueries = g_QueryQueue->WritePos - g_QueryQueue->ReadPos;
-	uint32 MaxQueries = g_QueryQueue->MaxQueries;
-	while(NumQueries >= MaxQueries){
-		LOG_WARN("Execution stalled: queue is full (%u / %u)...",
-				NumQueries, MaxQueries);
-		pthread_cond_wait(&g_QueryQueue->RoomAvailable, &g_QueryQueue->Mutex);
-		NumQueries = g_QueryQueue->WritePos - g_QueryQueue->ReadPos;
-		MaxQueries = g_QueryQueue->MaxQueries;
-	}
-
-	if(NumQueries == 0){
-		pthread_cond_signal(&g_QueryQueue->WorkAvailable);
-	}
-
-	g_QueryQueue->Queries[g_QueryQueue->WritePos % MaxQueries] = Query;
-	g_QueryQueue->WritePos += 1;
-	pthread_mutex_unlock(&g_QueryQueue->Mutex);
-}
-
-TQuery *QueryDequeue(AtomicInt *Running){
-	ASSERT(g_QueryQueue != NULL);
-	ASSERT(Running != NULL);
-
-	TQuery *Query = NULL;
-	pthread_mutex_lock(&g_QueryQueue->Mutex);
-	uint32 NumQueries = g_QueryQueue->WritePos - g_QueryQueue->ReadPos;
-	while(NumQueries == 0 && AtomicLoad(Running)){
-		pthread_cond_wait(&g_QueryQueue->WorkAvailable, &g_QueryQueue->Mutex);
-		NumQueries = g_QueryQueue->WritePos - g_QueryQueue->ReadPos;
-	}
-
-	if(NumQueries > 0 && AtomicLoad(Running)){
-		uint32 MaxQueries = g_QueryQueue->MaxQueries;
-		if(NumQueries == MaxQueries){
-			pthread_cond_signal(&g_QueryQueue->RoomAvailable);
-		}
-
-		Query = g_QueryQueue->Queries[g_QueryQueue->ReadPos % MaxQueries];
-		g_QueryQueue->ReadPos += 1;
-	}
-	pthread_mutex_unlock(&g_QueryQueue->Mutex);
-	return Query;
-}
-
-static void *WorkerThread(void *Data){
-	ASSERT(Data != NULL);
-	TWorker *Worker = (TWorker*)Data;
-	if(!AtomicLoad(&Worker->Running)){
-		LOG_WARN("%d: Exiting on entry...", Worker->WorkerID);
-		return NULL;
-	}
-
-	TDatabase *Database = OpenDatabase();
-	if(Database == NULL){
-		LOG_ERR("%d: Failed to connect to database", Worker->WorkerID);
-		return NULL;
-	}
-
-	LOG("%d: Running...", Worker->WorkerID);
-	while(TQuery *Query = QueryDequeue(&Worker->Running)){
-		Query->QueryType = Query->Request.Read8();
-		//bool (*ProcessQuery)(TDatabase*, TQuery*) = NULL;
-		switch(Query->QueryType){
-			case QUERY_INTERNAL_RESOLVE_WORLD:		ProcessInternalResolveWorld(Database, Query); break;
-			case QUERY_CHECK_ACCOUNT_PASSWORD:		ProcessCheckAccountPassword(Database, Query); break;
-			case QUERY_LOGIN_ACCOUNT:				ProcessLoginAccount(Database, Query); break;
-			case QUERY_LOGIN_ADMIN:					ProcessLoginAdmin(Database, Query); break;
-			case QUERY_LOGIN_GAME:					ProcessLoginGame(Database, Query); break;
-			case QUERY_LOGOUT_GAME:					ProcessLogoutGame(Database, Query); break;
-			case QUERY_SET_NAMELOCK:				ProcessSetNamelock(Database, Query); break;
-			case QUERY_BANISH_ACCOUNT:				ProcessBanishAccount(Database, Query); break;
-			case QUERY_SET_NOTATION:				ProcessSetNotation(Database, Query); break;
-			case QUERY_REPORT_STATEMENT:			ProcessReportStatement(Database, Query); break;
-			case QUERY_BANISH_IP_ADDRESS:			ProcessBanishIpAddress(Database, Query); break;
-			case QUERY_LOG_CHARACTER_DEATH:			ProcessLogCharacterDeath(Database, Query); break;
-			case QUERY_ADD_BUDDY:					ProcessAddBuddy(Database, Query); break;
-			case QUERY_REMOVE_BUDDY:				ProcessRemoveBuddy(Database, Query); break;
-			case QUERY_DECREMENT_IS_ONLINE:			ProcessDecrementIsOnline(Database, Query); break;
-			case QUERY_FINISH_AUCTIONS:				ProcessFinishAuctions(Database, Query); break;
-			case QUERY_TRANSFER_HOUSES:				ProcessTransferHouses(Database, Query); break;
-			case QUERY_EVICT_FREE_ACCOUNTS:			ProcessEvictFreeAccounts(Database, Query); break;
-			case QUERY_EVICT_DELETED_CHARACTERS:	ProcessEvictDeletedCharacters(Database, Query); break;
-			case QUERY_EVICT_EX_GUILDLEADERS:		ProcessEvictExGuildleaders(Database, Query); break;
-			case QUERY_INSERT_HOUSE_OWNER:			ProcessInsertHouseOwner(Database, Query); break;
-			case QUERY_UPDATE_HOUSE_OWNER:			ProcessUpdateHouseOwner(Database, Query); break;
-			case QUERY_DELETE_HOUSE_OWNER:			ProcessDeleteHouseOwner(Database, Query); break;
-			case QUERY_GET_HOUSE_OWNERS:			ProcessGetHouseOwners(Database, Query); break;
-			case QUERY_GET_AUCTIONS:				ProcessGetAuctions(Database, Query); break;
-			case QUERY_START_AUCTION:				ProcessStartAuction(Database, Query); break;
-			case QUERY_INSERT_HOUSES:				ProcessInsertHouses(Database, Query); break;
-			case QUERY_CLEAR_IS_ONLINE:				ProcessClearIsOnline(Database, Query); break;
-			case QUERY_CREATE_PLAYERLIST:			ProcessCreatePlayerlist(Database, Query); break;
-			case QUERY_LOG_KILLED_CREATURES:		ProcessLogKilledCreatures(Database, Query); break;
-			case QUERY_LOAD_PLAYERS:				ProcessLoadPlayers(Database, Query); break;
-			case QUERY_EXCLUDE_FROM_AUCTIONS:		ProcessExcludeFromAuctions(Database, Query); break;
-			case QUERY_CANCEL_HOUSE_TRANSFER:		ProcessCancelHouseTransfer(Database, Query); break;
-			case QUERY_LOAD_WORLD_CONFIG:			ProcessLoadWorldConfig(Database, Query); break;
-			case QUERY_CREATE_ACCOUNT:				ProcessCreateAccount(Database, Query); break;
-			case QUERY_CREATE_CHARACTER:			ProcessCreateCharacter(Database, Query); break;
-			case QUERY_GET_ACCOUNT_SUMMARY:			ProcessGetAccountSummary(Database, Query); break;
-			case QUERY_GET_CHARACTER_PROFILE:		ProcessGetCharacterProfile(Database, Query); break;
-			case QUERY_GET_WORLDS:					ProcessGetWorlds(Database, Query); break;
-			case QUERY_GET_ONLINE_CHARACTERS:		ProcessGetOnlineCharacters(Database, Query); break;
-			case QUERY_GET_KILL_STATISTICS:			ProcessGetKillStatistics(Database, Query); break;
-			default:{
-				QueryFailed(Query);
-				break;
-			}
-		}
-
-		QueryDone(Query);
-	}
-
-	LOG("%d: Exiting...", Worker->WorkerID);
-	CloseDatabase(Database);
-	return NULL;
-}
-
-bool InitQuery(void){
-	ASSERT(g_QueryQueue == NULL);
-	ASSERT(g_Workers == NULL);
-
-	// IMPORTANT(fusion): We'd ideally have a single query per connection at any
-	// given time but, in reality, connections could be reset while their queries
-	// are still in a query queue/worker, increasing the maximum number of queries
-	// in flight.
-	g_QueryQueue = (TQueryQueue*)calloc(1, sizeof(TQueryQueue));
-	pthread_mutex_init(&g_QueryQueue->Mutex, NULL);
-	pthread_cond_init(&g_QueryQueue->WorkAvailable, NULL);
-	pthread_cond_init(&g_QueryQueue->RoomAvailable, NULL);
-	g_QueryQueue->MaxQueries = 2 * g_Config.MaxConnections;
-	g_QueryQueue->Queries = (TQuery**)calloc(g_QueryQueue->MaxQueries, sizeof(TQuery*));
-
-	g_NumWorkers = 1;
-	g_Workers = (TWorker*)calloc(g_NumWorkers, sizeof(TWorker));
-	for(int i = 0; i < g_NumWorkers; i += 1){
-		TWorker *Worker = &g_Workers[i];
-		Worker->WorkerID = i;
-		AtomicStore(&Worker->Running, 1);
-		int ErrorCode = pthread_create(&Worker->Thread, NULL, WorkerThread, Worker);
-		if(ErrorCode != 0){
-			LOG_ERR("Failed to spawn worker thread %d: (%d) %s",
-					i, ErrorCode, strerrordesc_np(ErrorCode));
-			Worker->WorkerID = -1;
-			return false;
-		}
-	}
-
-	return true;
-}
-
-void ExitQuery(void){
-	if(g_Workers != NULL){
-		for(int i = 0; i < g_NumWorkers; i += 1){
-			AtomicStore(&g_Workers[i].Running, 0);
-		}
-
-		if(g_QueryQueue != NULL){
-			pthread_cond_broadcast(&g_QueryQueue->WorkAvailable);
-		}
-
-		for(int i = 0; i < g_NumWorkers; i += 1){
-			// IMPORTANT(fusion): The `WorkerID` will be set to -1 if we fail
-			// to spawn its thread.
-			if(g_Workers[i].WorkerID != -1){
-				pthread_join(g_Workers[i].Thread, NULL);
-			}
-		}
-
-		g_NumWorkers = 0;
-		free(g_Workers);
-	}
-
-	if(g_QueryQueue != NULL){
-		pthread_mutex_destroy(&g_QueryQueue->Mutex);
-		pthread_cond_destroy(&g_QueryQueue->WorkAvailable);
-		pthread_cond_destroy(&g_QueryQueue->RoomAvailable);
-
-		// TODO(fusion): Abort queries instead?
-		uint32 MaxQueries = g_QueryQueue->MaxQueries;
-		for(uint32 ReadPos = g_QueryQueue->ReadPos;
-				ReadPos != g_QueryQueue->WritePos;
-				ReadPos += 1){
-			QueryDone(g_QueryQueue->Queries[ReadPos % MaxQueries]);
-		}
-
-		free(g_QueryQueue->Queries);
-		free(g_QueryQueue);
-	}
-}
 
 // Query Request
 //==============================================================================
@@ -324,49 +98,327 @@ void QueryFailed(TQuery *Query){
 	QueryFinishResponse(Query);
 }
 
+
 // Query Processing
 //==============================================================================
-void ProcessInternalResolveWorld(TDatabase *Database, TQuery *Query);
-void ProcessCheckAccountPassword(TDatabase *Database, TQuery *Query);
-void ProcessLoginAccount(TDatabase *Database, TQuery *Query);
-void ProcessLoginAdmin(TDatabase *Database, TQuery *Query);
-void ProcessLoginGame(TDatabase *Database, TQuery *Query);
-void ProcessLogoutGame(TDatabase *Database, TQuery *Query);
-void ProcessSetNamelock(TDatabase *Database, TQuery *Query);
-void ProcessBanishAccount(TDatabase *Database, TQuery *Query);
-void ProcessSetNotation(TDatabase *Database, TQuery *Query);
-void ProcessReportStatement(TDatabase *Database, TQuery *Query);
-void ProcessBanishIpAddress(TDatabase *Database, TQuery *Query);
-void ProcessLogCharacterDeath(TDatabase *Database, TQuery *Query);
-void ProcessAddBuddy(TDatabase *Database, TQuery *Query);
-void ProcessRemoveBuddy(TDatabase *Database, TQuery *Query);
-void ProcessDecrementIsOnline(TDatabase *Database, TQuery *Query);
-void ProcessFinishAuctions(TDatabase *Database, TQuery *Query);
-void ProcessTransferHouses(TDatabase *Database, TQuery *Query);
-void ProcessEvictFreeAccounts(TDatabase *Database, TQuery *Query);
-void ProcessEvictDeletedCharacters(TDatabase *Database, TQuery *Query);
-void ProcessEvictExGuildleaders(TDatabase *Database, TQuery *Query);
-void ProcessInsertHouseOwner(TDatabase *Database, TQuery *Query);
-void ProcessUpdateHouseOwner(TDatabase *Database, TQuery *Query);
-void ProcessDeleteHouseOwner(TDatabase *Database, TQuery *Query);
-void ProcessGetHouseOwners(TDatabase *Database, TQuery *Query);
-void ProcessGetAuctions(TDatabase *Database, TQuery *Query);
-void ProcessStartAuction(TDatabase *Database, TQuery *Query);
-void ProcessInsertHouses(TDatabase *Database, TQuery *Query);
-void ProcessClearIsOnline(TDatabase *Database, TQuery *Query);
-void ProcessCreatePlayerlist(TDatabase *Database, TQuery *Query);
-void ProcessLogKilledCreatures(TDatabase *Database, TQuery *Query);
-void ProcessLoadPlayers(TDatabase *Database, TQuery *Query);
-void ProcessExcludeFromAuctions(TDatabase *Database, TQuery *Query);
-void ProcessCancelHouseTransfer(TDatabase *Database, TQuery *Query);
-void ProcessLoadWorldConfig(TDatabase *Database, TQuery *Query);
-void ProcessCreateAccount(TDatabase *Database, TQuery *Query);
-void ProcessCreateCharacter(TDatabase *Database, TQuery *Query);
-void ProcessGetAccountSummary(TDatabase *Database, TQuery *Query);
-void ProcessGetCharacterProfile(TDatabase *Database, TQuery *Query);
-void ProcessGetWorlds(TDatabase *Database, TQuery *Query);
-void ProcessGetOnlineCharacters(TDatabase *Database, TQuery *Query);
-void ProcessGetKillStatistics(TDatabase *Database, TQuery *Query);
+static bool ProcessInternalResolveWorld(TDatabase *Database, TQuery *Query);
+static bool ProcessCheckAccountPassword(TDatabase *Database, TQuery *Query);
+static bool ProcessLoginAccount(TDatabase *Database, TQuery *Query);
+static bool ProcessLoginAdmin(TDatabase *Database, TQuery *Query);
+static bool ProcessLoginGame(TDatabase *Database, TQuery *Query);
+static bool ProcessLogoutGame(TDatabase *Database, TQuery *Query);
+static bool ProcessSetNamelock(TDatabase *Database, TQuery *Query);
+static bool ProcessBanishAccount(TDatabase *Database, TQuery *Query);
+static bool ProcessSetNotation(TDatabase *Database, TQuery *Query);
+static bool ProcessReportStatement(TDatabase *Database, TQuery *Query);
+static bool ProcessBanishIpAddress(TDatabase *Database, TQuery *Query);
+static bool ProcessLogCharacterDeath(TDatabase *Database, TQuery *Query);
+static bool ProcessAddBuddy(TDatabase *Database, TQuery *Query);
+static bool ProcessRemoveBuddy(TDatabase *Database, TQuery *Query);
+static bool ProcessDecrementIsOnline(TDatabase *Database, TQuery *Query);
+static bool ProcessFinishAuctions(TDatabase *Database, TQuery *Query);
+static bool ProcessTransferHouses(TDatabase *Database, TQuery *Query);
+static bool ProcessEvictFreeAccounts(TDatabase *Database, TQuery *Query);
+static bool ProcessEvictDeletedCharacters(TDatabase *Database, TQuery *Query);
+static bool ProcessEvictExGuildleaders(TDatabase *Database, TQuery *Query);
+static bool ProcessInsertHouseOwner(TDatabase *Database, TQuery *Query);
+static bool ProcessUpdateHouseOwner(TDatabase *Database, TQuery *Query);
+static bool ProcessDeleteHouseOwner(TDatabase *Database, TQuery *Query);
+static bool ProcessGetHouseOwners(TDatabase *Database, TQuery *Query);
+static bool ProcessGetAuctions(TDatabase *Database, TQuery *Query);
+static bool ProcessStartAuction(TDatabase *Database, TQuery *Query);
+static bool ProcessInsertHouses(TDatabase *Database, TQuery *Query);
+static bool ProcessClearIsOnline(TDatabase *Database, TQuery *Query);
+static bool ProcessCreatePlayerlist(TDatabase *Database, TQuery *Query);
+static bool ProcessLogKilledCreatures(TDatabase *Database, TQuery *Query);
+static bool ProcessLoadPlayers(TDatabase *Database, TQuery *Query);
+static bool ProcessExcludeFromAuctions(TDatabase *Database, TQuery *Query);
+static bool ProcessCancelHouseTransfer(TDatabase *Database, TQuery *Query);
+static bool ProcessLoadWorldConfig(TDatabase *Database, TQuery *Query);
+static bool ProcessCreateAccount(TDatabase *Database, TQuery *Query);
+static bool ProcessCreateCharacter(TDatabase *Database, TQuery *Query);
+static bool ProcessGetAccountSummary(TDatabase *Database, TQuery *Query);
+static bool ProcessGetCharacterProfile(TDatabase *Database, TQuery *Query);
+static bool ProcessGetWorlds(TDatabase *Database, TQuery *Query);
+static bool ProcessGetOnlineCharacters(TDatabase *Database, TQuery *Query);
+static bool ProcessGetKillStatistics(TDatabase *Database, TQuery *Query);
+
+// Query Queue and Workers
+//==============================================================================
+TQuery *QueryNew(void){
+	TQuery *Query = (TQuery*)calloc(1, sizeof(TQuery));
+	AtomicStore(&Query->RefCount, 1);
+	Query->BufferSize = g_Config.QueryBufferSize;
+	Query->Buffer = (uint8*)calloc(1, Query->BufferSize);
+	Query->Request = TReadBuffer{};
+	Query->Response = TWriteBuffer{};
+	return Query;
+}
+
+void QueryDone(TQuery *Query){
+	if(Query != NULL){
+		int RefCount = AtomicFetchAdd(&Query->RefCount, -1);
+		ASSERT(RefCount >= 1);
+		if(RefCount == 1){
+			free(Query->Buffer);
+			free(Query);
+		}
+	}
+}
+
+int QueryRefCount(TQuery *Query){
+	return AtomicLoad(&Query->RefCount);
+}
+
+void QueryEnqueue(TQuery *Query){
+	ASSERT(g_QueryQueue != NULL);
+	ASSERT(Query != NULL);
+
+	// IMPORTANT(fusion): A query object should be referenced by a connection
+	// and a query queue/worker at most. Anything else, we're gonna have a bad
+	// time.
+	int RefCount = 1;
+	if(!AtomicCompareExchange(&Query->RefCount, &RefCount, 2)){
+		LOG_ERR("Query already have %d references", RefCount);
+		return;
+	}
+
+	pthread_mutex_lock(&g_QueryQueue->Mutex);
+	uint32 NumQueries = g_QueryQueue->WritePos - g_QueryQueue->ReadPos;
+	uint32 MaxQueries = g_QueryQueue->MaxQueries;
+	while(NumQueries >= MaxQueries){
+		LOG_WARN("Execution stalled: queue is full (%u / %u)...",
+				NumQueries, MaxQueries);
+		pthread_cond_wait(&g_QueryQueue->RoomAvailable, &g_QueryQueue->Mutex);
+		NumQueries = g_QueryQueue->WritePos - g_QueryQueue->ReadPos;
+		MaxQueries = g_QueryQueue->MaxQueries;
+	}
+
+	if(NumQueries == 0){
+		pthread_cond_signal(&g_QueryQueue->WorkAvailable);
+	}
+
+	g_QueryQueue->Queries[g_QueryQueue->WritePos % MaxQueries] = Query;
+	g_QueryQueue->WritePos += 1;
+	pthread_mutex_unlock(&g_QueryQueue->Mutex);
+}
+
+TQuery *QueryDequeue(AtomicInt *Stop){
+	ASSERT(g_QueryQueue != NULL);
+	ASSERT(Stop != NULL);
+
+	TQuery *Query = NULL;
+	pthread_mutex_lock(&g_QueryQueue->Mutex);
+	uint32 NumQueries = g_QueryQueue->WritePos - g_QueryQueue->ReadPos;
+	while(NumQueries == 0 && !AtomicLoad(Stop)){
+		pthread_cond_wait(&g_QueryQueue->WorkAvailable, &g_QueryQueue->Mutex);
+		NumQueries = g_QueryQueue->WritePos - g_QueryQueue->ReadPos;
+	}
+
+	if(NumQueries > 0 && !AtomicLoad(Stop)){
+		uint32 MaxQueries = g_QueryQueue->MaxQueries;
+		if(NumQueries == MaxQueries){
+			pthread_cond_signal(&g_QueryQueue->RoomAvailable);
+		}
+
+		Query = g_QueryQueue->Queries[g_QueryQueue->ReadPos % MaxQueries];
+		g_QueryQueue->ReadPos += 1;
+	}
+	pthread_mutex_unlock(&g_QueryQueue->Mutex);
+	return Query;
+}
+
+static void *WorkerThread(void *Data){
+	ASSERT(Data != NULL);
+	TWorker *Worker = (TWorker*)Data;
+	if(AtomicLoad(&Worker->Stop)){
+		LOG_WARN("Worker#%d Stopping on entry...", Worker->WorkerID);
+		AtomicStore(&Worker->Status, WORKER_STATUS_DONE);
+		return NULL;
+	}
+
+	TDatabase *Database = DatabaseOpen();
+	if(Database == NULL){
+		LOG_ERR("Worker#%d Failed to connect to database", Worker->WorkerID);
+		AtomicStore(&Worker->Status, WORKER_STATUS_DONE);
+		return NULL;
+	}
+
+	LOG("Worker#%d ACTIVE...", Worker->WorkerID);
+	AtomicStore(&Worker->Status, WORKER_STATUS_ACTIVE);
+	while(TQuery *Query = QueryDequeue(&Worker->Stop)){
+		bool (*ProcessQuery)(TDatabase*, TQuery*) = NULL;
+		Query->QueryType = Query->Request.Read8();
+		/*switch(Query->QueryType){
+			case QUERY_INTERNAL_RESOLVE_WORLD:		ProcessQuery = ProcessInternalResolveWorld; break;
+			case QUERY_CHECK_ACCOUNT_PASSWORD:		ProcessQuery = ProcessCheckAccountPassword; break;
+			case QUERY_LOGIN_ACCOUNT:				ProcessQuery = ProcessLoginAccount; break;
+			case QUERY_LOGIN_ADMIN:					ProcessQuery = ProcessLoginAdmin; break;
+			case QUERY_LOGIN_GAME:					ProcessQuery = ProcessLoginGame; break;
+			case QUERY_LOGOUT_GAME:					ProcessQuery = ProcessLogoutGame; break;
+			case QUERY_SET_NAMELOCK:				ProcessQuery = ProcessSetNamelock; break;
+			case QUERY_BANISH_ACCOUNT:				ProcessQuery = ProcessBanishAccount; break;
+			case QUERY_SET_NOTATION:				ProcessQuery = ProcessSetNotation; break;
+			case QUERY_REPORT_STATEMENT:			ProcessQuery = ProcessReportStatement; break;
+			case QUERY_BANISH_IP_ADDRESS:			ProcessQuery = ProcessBanishIpAddress; break;
+			case QUERY_LOG_CHARACTER_DEATH:			ProcessQuery = ProcessLogCharacterDeath; break;
+			case QUERY_ADD_BUDDY:					ProcessQuery = ProcessAddBuddy; break;
+			case QUERY_REMOVE_BUDDY:				ProcessQuery = ProcessRemoveBuddy; break;
+			case QUERY_DECREMENT_IS_ONLINE:			ProcessQuery = ProcessDecrementIsOnline; break;
+			case QUERY_FINISH_AUCTIONS:				ProcessQuery = ProcessFinishAuctions; break;
+			case QUERY_TRANSFER_HOUSES:				ProcessQuery = ProcessTransferHouses; break;
+			case QUERY_EVICT_FREE_ACCOUNTS:			ProcessQuery = ProcessEvictFreeAccounts; break;
+			case QUERY_EVICT_DELETED_CHARACTERS:	ProcessQuery = ProcessEvictDeletedCharacters; break;
+			case QUERY_EVICT_EX_GUILDLEADERS:		ProcessQuery = ProcessEvictExGuildleaders; break;
+			case QUERY_INSERT_HOUSE_OWNER:			ProcessQuery = ProcessInsertHouseOwner; break;
+			case QUERY_UPDATE_HOUSE_OWNER:			ProcessQuery = ProcessUpdateHouseOwner; break;
+			case QUERY_DELETE_HOUSE_OWNER:			ProcessQuery = ProcessDeleteHouseOwner; break;
+			case QUERY_GET_HOUSE_OWNERS:			ProcessQuery = ProcessGetHouseOwners; break;
+			case QUERY_GET_AUCTIONS:				ProcessQuery = ProcessGetAuctions; break;
+			case QUERY_START_AUCTION:				ProcessQuery = ProcessStartAuction; break;
+			case QUERY_INSERT_HOUSES:				ProcessQuery = ProcessInsertHouses; break;
+			case QUERY_CLEAR_IS_ONLINE:				ProcessQuery = ProcessClearIsOnline; break;
+			case QUERY_CREATE_PLAYERLIST:			ProcessQuery = ProcessCreatePlayerlist; break;
+			case QUERY_LOG_KILLED_CREATURES:		ProcessQuery = ProcessLogKilledCreatures; break;
+			case QUERY_LOAD_PLAYERS:				ProcessQuery = ProcessLoadPlayers; break;
+			case QUERY_EXCLUDE_FROM_AUCTIONS:		ProcessQuery = ProcessExcludeFromAuctions; break;
+			case QUERY_CANCEL_HOUSE_TRANSFER:		ProcessQuery = ProcessCancelHouseTransfer; break;
+			case QUERY_LOAD_WORLD_CONFIG:			ProcessQuery = ProcessLoadWorldConfig; break;
+			case QUERY_CREATE_ACCOUNT:				ProcessQuery = ProcessCreateAccount; break;
+			case QUERY_CREATE_CHARACTER:			ProcessQuery = ProcessCreateCharacter; break;
+			case QUERY_GET_ACCOUNT_SUMMARY:			ProcessQuery = ProcessGetAccountSummary; break;
+			case QUERY_GET_CHARACTER_PROFILE:		ProcessQuery = ProcessGetCharacterProfile; break;
+			case QUERY_GET_WORLDS:					ProcessQuery = ProcessGetWorlds; break;
+			case QUERY_GET_ONLINE_CHARACTERS:		ProcessQuery = ProcessGetOnlineCharacters; break;
+			case QUERY_GET_KILL_STATISTICS:			ProcessQuery = ProcessGetKillStatistics; break;
+		}*/
+
+		if(ProcessQuery != NULL && DatabaseCheckpoint(Database)){
+			// NOTE(fusion): A minimum of 1 attempt is ASSUMED.
+			int Attempts = g_Config.QueryMaxAttempts;
+			while(!ProcessQuery(Database, Query)){
+				if(Attempts <= 0 || !DatabaseCheckpoint(Database)){
+					QueryFailed(Query);
+					break;
+				}
+				Attempts -= 1;
+			}
+		}else{
+			QueryFailed(Query);
+		}
+
+		QueryDone(Query);
+	}
+
+	LOG("Worker#%d DONE...", Worker->WorkerID);
+	DatabaseClose(Database);
+	AtomicStore(&Worker->Status, WORKER_STATUS_DONE);
+	return NULL;
+}
+
+bool InitQuery(void){
+	ASSERT(g_QueryQueue == NULL);
+	ASSERT(g_Workers == NULL);
+
+	// IMPORTANT(fusion): We'd ideally have a single query per connection at any
+	// given time but, in reality, connections could be reset while their queries
+	// are still in a query queue/worker, increasing the maximum number of queries
+	// in flight.
+	g_QueryQueue = (TQueryQueue*)calloc(1, sizeof(TQueryQueue));
+	pthread_mutex_init(&g_QueryQueue->Mutex, NULL);
+	pthread_cond_init(&g_QueryQueue->WorkAvailable, NULL);
+	pthread_cond_init(&g_QueryQueue->RoomAvailable, NULL);
+	g_QueryQueue->MaxQueries = 2 * g_Config.MaxConnections;
+	g_QueryQueue->Queries = (TQuery**)calloc(g_QueryQueue->MaxQueries, sizeof(TQuery*));
+
+	int NumWorkers = g_Config.QueryWorkerThreads;
+	g_Workers = (TWorker*)calloc(NumWorkers, sizeof(TWorker));
+	for(int i = 0; i < NumWorkers; i += 1){
+		TWorker *Worker = &g_Workers[i];
+		Worker->WorkerID = i;
+		AtomicStore(&Worker->Status, WORKER_STATUS_SPAWNING);
+		AtomicStore(&Worker->Stop, 0);
+		int ErrorCode = pthread_create(&Worker->Thread, NULL, WorkerThread, Worker);
+		if(ErrorCode != 0){
+			LOG_ERR("Failed to spawn worker thread %d: (%d) %s",
+					i, ErrorCode, strerrordesc_np(ErrorCode));
+			return false;
+		}
+	}
+
+	while(true){
+		int NumWorkersSpawning = 0;
+		int NumWorkersActive = 0;
+		int NumWorkersDone = 0;
+		for(int i = 0; i < NumWorkers; i += 1){
+			int Status = AtomicLoad(&g_Workers[i].Status);
+			if(Status == WORKER_STATUS_SPAWNING){
+				NumWorkersSpawning += 1;
+			}else if(Status == WORKER_STATUS_ACTIVE){
+				NumWorkersActive += 1;
+			}else if(Status == WORKER_STATUS_DONE){
+				NumWorkersDone += 1;
+			}
+		}
+
+		if(NumWorkersSpawning > 0){
+			LOG("Waiting on worker threads... (SPAWNING=%d, ACTIVE=%d, DONE=%d)",
+					NumWorkersSpawning, NumWorkersActive, NumWorkersDone);
+			SleepMS(500);
+			continue;
+		}
+
+		if(NumWorkersDone > 0){
+			LOG_ERR("%d worker threads failed to initialize", NumWorkersDone);
+			return false;
+		}
+
+		ASSERT(NumWorkersActive == NumWorkers);
+		break;
+	}
+
+	return true;
+}
+
+void ExitQuery(void){
+	if(g_Workers != NULL){
+		ASSERT(g_QueryQueue != NULL);
+
+		for(int i = 0; i < g_Config.QueryWorkerThreads; i += 1){
+			AtomicStore(&g_Workers[i].Stop, 1);
+		}
+
+		pthread_cond_broadcast(&g_QueryQueue->WorkAvailable);
+		for(int i = 0; i < g_Config.QueryWorkerThreads; i += 1){
+			// IMPORTANT(fusion): There is no "invalid" pthread handle so this
+			// is non-standard behaviour. Nevertheless the game server uses it
+			// and seems to be consistent on Linux, which is what matters at
+			// the end of the day.
+			if(g_Workers[i].Thread != 0){
+				pthread_join(g_Workers[i].Thread, NULL);
+			}
+		}
+
+		free(g_Workers);
+	}
+
+	if(g_QueryQueue != NULL){
+		pthread_mutex_destroy(&g_QueryQueue->Mutex);
+		pthread_cond_destroy(&g_QueryQueue->WorkAvailable);
+		pthread_cond_destroy(&g_QueryQueue->RoomAvailable);
+
+		// TODO(fusion): Abort queries instead?
+		uint32 MaxQueries = g_QueryQueue->MaxQueries;
+		for(uint32 ReadPos = g_QueryQueue->ReadPos;
+				ReadPos != g_QueryQueue->WritePos;
+				ReadPos += 1){
+			QueryDone(g_QueryQueue->Queries[ReadPos % MaxQueries]);
+		}
+
+		free(g_QueryQueue->Queries);
+		free(g_QueryQueue);
+	}
+}
 
 // TODO(fusion): These are the old query processing functions. The new ones will
 // be very similar, except that we want a way to tell whether there was a database

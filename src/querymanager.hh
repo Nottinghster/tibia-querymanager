@@ -94,7 +94,9 @@ struct TConfig{
 	int  UpdateRate;
 	int  QueryManagerPort;
 	char QueryManagerPassword[30];
+	int  QueryWorkerThreads;
 	int  QueryBufferSize;
+	int  QueryMaxAttempts;
 	int  MaxConnections;
 	int  MaxConnectionIdleTime;
 };
@@ -860,8 +862,9 @@ bool CheckDatabaseSchema(void);
 bool InitDatabase(void);
 void ExitDatabase(void);
 
-TDatabase *OpenDatabase(void);
-void CloseDatabase(TDatabase *Database);
+TDatabase *DatabaseOpen(void);
+void DatabaseClose(TDatabase *Database);
+bool DatabaseCheckpoint(TDatabase *Database);
 
 // query.cc
 //==============================================================================
@@ -927,14 +930,6 @@ struct TQuery{
 	TWriteBuffer Response;
 };
 
-TQuery *QueryNew(void);
-void QueryDone(TQuery *Query);
-int QueryRefCount(TQuery *Query);
-void QueryEnqueue(TQuery *Query);
-TQuery *QueryDequeue(AtomicInt *Running);
-bool InitQuery(void);
-void ExitQuery(void);
-
 TWriteBuffer QueryBeginRequest(TQuery *Query, int QueryType);
 bool QueryFinishRequest(TQuery *Query, TWriteBuffer WriteBuffer);
 bool QueryInternalResolveWorld(TQuery *Query, const char *World);
@@ -945,47 +940,13 @@ void QueryOk(TQuery *Query);
 void QueryError(TQuery *Query, int ErrorCode);
 void QueryFailed(TQuery *Query);
 
-void ProcessInternalResolveWorld(TDatabase *Database, TQuery *Query);
-void ProcessCheckAccountPassword(TDatabase *Database, TQuery *Query);
-void ProcessLoginAccount(TDatabase *Database, TQuery *Query);
-void ProcessLoginAdmin(TDatabase *Database, TQuery *Query);
-void ProcessLoginGame(TDatabase *Database, TQuery *Query);
-void ProcessLogoutGame(TDatabase *Database, TQuery *Query);
-void ProcessSetNamelock(TDatabase *Database, TQuery *Query);
-void ProcessBanishAccount(TDatabase *Database, TQuery *Query);
-void ProcessSetNotation(TDatabase *Database, TQuery *Query);
-void ProcessReportStatement(TDatabase *Database, TQuery *Query);
-void ProcessBanishIpAddress(TDatabase *Database, TQuery *Query);
-void ProcessLogCharacterDeath(TDatabase *Database, TQuery *Query);
-void ProcessAddBuddy(TDatabase *Database, TQuery *Query);
-void ProcessRemoveBuddy(TDatabase *Database, TQuery *Query);
-void ProcessDecrementIsOnline(TDatabase *Database, TQuery *Query);
-void ProcessFinishAuctions(TDatabase *Database, TQuery *Query);
-void ProcessTransferHouses(TDatabase *Database, TQuery *Query);
-void ProcessEvictFreeAccounts(TDatabase *Database, TQuery *Query);
-void ProcessEvictDeletedCharacters(TDatabase *Database, TQuery *Query);
-void ProcessEvictExGuildleaders(TDatabase *Database, TQuery *Query);
-void ProcessInsertHouseOwner(TDatabase *Database, TQuery *Query);
-void ProcessUpdateHouseOwner(TDatabase *Database, TQuery *Query);
-void ProcessDeleteHouseOwner(TDatabase *Database, TQuery *Query);
-void ProcessGetHouseOwners(TDatabase *Database, TQuery *Query);
-void ProcessGetAuctions(TDatabase *Database, TQuery *Query);
-void ProcessStartAuction(TDatabase *Database, TQuery *Query);
-void ProcessInsertHouses(TDatabase *Database, TQuery *Query);
-void ProcessClearIsOnline(TDatabase *Database, TQuery *Query);
-void ProcessCreatePlayerlist(TDatabase *Database, TQuery *Query);
-void ProcessLogKilledCreatures(TDatabase *Database, TQuery *Query);
-void ProcessLoadPlayers(TDatabase *Database, TQuery *Query);
-void ProcessExcludeFromAuctions(TDatabase *Database, TQuery *Query);
-void ProcessCancelHouseTransfer(TDatabase *Database, TQuery *Query);
-void ProcessLoadWorldConfig(TDatabase *Database, TQuery *Query);
-void ProcessCreateAccount(TDatabase *Database, TQuery *Query);
-void ProcessCreateCharacter(TDatabase *Database, TQuery *Query);
-void ProcessGetAccountSummary(TDatabase *Database, TQuery *Query);
-void ProcessGetCharacterProfile(TDatabase *Database, TQuery *Query);
-void ProcessGetWorlds(TDatabase *Database, TQuery *Query);
-void ProcessGetOnlineCharacters(TDatabase *Database, TQuery *Query);
-void ProcessGetKillStatistics(TDatabase *Database, TQuery *Query);
+TQuery *QueryNew(void);
+void QueryDone(TQuery *Query);
+int QueryRefCount(TQuery *Query);
+void QueryEnqueue(TQuery *Query);
+TQuery *QueryDequeue(AtomicInt *Stop);
+bool InitQuery(void);
+void ExitQuery(void);
 
 // connections.cc
 //==============================================================================

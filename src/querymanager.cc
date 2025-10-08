@@ -382,9 +382,13 @@ bool ReadConfig(const char *FileName, TConfig *Config){
 			ReadIntegerConfig(&Config->QueryManagerPort, Val);
 		}else if(StringEqCI(Key, "QueryManagerPassword")){
 			ReadStringBufConfig(Config->QueryManagerPassword, Val);
+		}else if(StringEqCI(Key, "QueryWorkerThreads")){
+			ReadIntegerConfig(&Config->QueryWorkerThreads, Val);
 		}else if(StringEqCI(Key, "QueryBufferSize")
 				|| StringEqCI(Key, "MaxConnectionPacketSize")){
 			ReadSizeConfig(&Config->QueryBufferSize, Val);
+		}else if(StringEqCI(Key, "QueryMaxAttempts")){
+			ReadIntegerConfig(&Config->QueryMaxAttempts, Val);
 		}else if(StringEqCI(Key, "MaxConnections")){
 			ReadIntegerConfig(&Config->MaxConnections, Val);
 		}else if(StringEqCI(Key, "MaxConnectionIdleTime")){
@@ -430,7 +434,7 @@ int main(int argc, const char **argv){
 
 	// HostCache Config
 	g_Config.MaxCachedHostNames      = 100;
-	g_Config.HostNameExpireTime   = 30 * 60 * 1000; // milliseconds
+	g_Config.HostNameExpireTime      = 30 * 60 * 1000; // milliseconds
 
 	// Database Config
 	g_Config.MaxCachedStatements     = 100;
@@ -446,7 +450,9 @@ int main(int argc, const char **argv){
 	g_Config.UpdateRate              = 20;
 	g_Config.QueryManagerPort        = 7174;
 	StringBufCopy(g_Config.QueryManagerPassword, "");
+	g_Config.QueryWorkerThreads      = 1;
 	g_Config.QueryBufferSize         = (int)MB(1);
+	g_Config.QueryMaxAttempts        = 2;
 	g_Config.MaxConnections          = 50;
 	g_Config.MaxConnectionIdleTime   = 60 * 1000;      // milliseconds
 
@@ -454,6 +460,24 @@ int main(int argc, const char **argv){
 	if(!ReadConfig("config.cfg", &g_Config)){
 		return EXIT_FAILURE;
 	}
+
+	// NOTE(fusion): Print config values for debugging purposes.
+	LOG("Max cached host names:    %d",     g_Config.MaxCachedHostNames);
+	LOG("Host name expire time:    %dms",   g_Config.HostNameExpireTime);
+	LOG("Max cached statements:    %d",     g_Config.MaxCachedStatements);
+	LOG("Database file:            \"%s\"", g_Config.DatabaseFile);
+	LOG("Database host:            \"%s\"", g_Config.DatabaseHost);
+	LOG("Database port:            %d",     g_Config.DatabasePort);
+	LOG("Database user:            \"%s\"", g_Config.DatabaseUser);
+	LOG("Database name:            \"%s\"", g_Config.DatabaseName);
+	LOG("Database TLS:             %s",     g_Config.DatabaseTLS ? "true" : "false");
+	LOG("Query manager port:       %d",     g_Config.QueryManagerPort);
+	LOG("Query worker threads:     %d",     g_Config.QueryWorkerThreads);
+	LOG("Query buffer size:        %d",     g_Config.QueryBufferSize);
+	LOG("Query max attempts:       %d",     g_Config.QueryMaxAttempts);
+	LOG("Max connections:          %d",     g_Config.MaxConnections);
+	LOG("Max connection idle time: %dms",   g_Config.MaxConnectionIdleTime);
+
 
 	if(!CheckSHA256()){
 		return EXIT_FAILURE;
