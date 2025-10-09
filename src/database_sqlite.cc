@@ -88,7 +88,7 @@ static sqlite3_stmt *PrepareQuery(TDatabase *Database, const char *Text){
 		if(Entry->Stmt != NULL && Entry->Hash == Hash){
 			const char *EntryText = sqlite3_sql(Entry->Stmt);
 			ASSERT(EntryText != NULL);
-if(strcmp(EntryText, Text) == 0){
+			if(strcmp(EntryText, Text) == 0){
 				Stmt = Entry->Stmt;
 				Entry->LastUsed = g_MonotonicTimeMS;
 				break;
@@ -379,6 +379,7 @@ int DatabaseChanges(TDatabase *Database){
 bool DatabaseCheckpoint(TDatabase *Database){
 	// IMPORTANT(fusion): Since SQLite is a local database, we don't need to check
 	// whether the connection is still valid or needs reconnecting.
+	ASSERT(Database != NULL);
 	return true;
 }
 
@@ -610,8 +611,7 @@ bool AccountEmailExists(TDatabase *Database, const char *Email, bool *Result){
 	return true;
 }
 
-bool CreateAccount(TDatabase *Database, int AccountID,
-		const char *Email, const uint8 *Auth, int AuthSize){
+bool CreateAccount(TDatabase *Database, int AccountID, const char *Email, const uint8 *Auth, int AuthSize){
 	ASSERT(Database != NULL && Email != NULL
 			&& Auth != NULL && AuthSize > 0);
 	sqlite3_stmt *Stmt = PrepareQuery(Database,
@@ -756,8 +756,7 @@ bool ActivatePendingPremiumDays(TDatabase *Database, int AccountID){
 	return true;
 }
 
-bool GetCharacterEndpoints(TDatabase *Database, int AccountID,
-		DynamicArray<TCharacterEndpoint> *Characters){
+bool GetCharacterEndpoints(TDatabase *Database, int AccountID, DynamicArray<TCharacterEndpoint> *Characters){
 	ASSERT(Database != NULL && Characters != NULL);
 	sqlite3_stmt *Stmt = PrepareQuery(Database,
 			"SELECT C.Name, W.Name, W.Host, W.Port"
@@ -802,8 +801,7 @@ bool GetCharacterEndpoints(TDatabase *Database, int AccountID,
 	return true;
 }
 
-bool GetCharacterSummaries(TDatabase *Database, int AccountID,
-		DynamicArray<TCharacterSummary> *Characters){
+bool GetCharacterSummaries(TDatabase *Database, int AccountID, DynamicArray<TCharacterSummary> *Characters){
 	ASSERT(Database != NULL && Characters != NULL);
 	sqlite3_stmt *Stmt = PrepareQuery(Database,
 			"SELECT C.Name, W.Name, C.Level, C.Profession, C.IsOnline, C.Deleted"
@@ -865,8 +863,7 @@ bool CharacterNameExists(TDatabase *Database, const char *Name, bool *Result){
 	return false;
 }
 
-bool CreateCharacter(TDatabase *Database, int WorldID,
-		int AccountID, const char *Name, int Sex){
+bool CreateCharacter(TDatabase *Database, int WorldID, int AccountID, const char *Name, int Sex){
 	ASSERT(Database != NULL && Name != NULL);
 	sqlite3_stmt *Stmt = PrepareQuery(Database,
 			"INSERT INTO Characters (WorldID, AccountID, Name, Sex)"
@@ -895,8 +892,7 @@ bool CreateCharacter(TDatabase *Database, int WorldID,
 	return (ErrCode == SQLITE_DONE);
 }
 
-bool GetCharacterID(TDatabase *Database, int WorldID,
-		const char *CharacterName, int *CharacterID){
+bool GetCharacterID(TDatabase *Database, int WorldID, const char *CharacterName, int *CharacterID){
 	ASSERT(Database != NULL && CharacterName != NULL && CharacterID != NULL);
 	sqlite3_stmt *Stmt = PrepareQuery(Database,
 			"SELECT CharacterID FROM Characters"
@@ -923,8 +919,7 @@ bool GetCharacterID(TDatabase *Database, int WorldID,
 	return true;
 }
 
-bool GetCharacterLoginData(TDatabase *Database,
-		const char *CharacterName, TCharacterLoginData *Character){
+bool GetCharacterLoginData(TDatabase *Database, const char *CharacterName, TCharacterLoginData *Character){
 	ASSERT(Database != NULL && CharacterName != NULL && Character != NULL);
 	sqlite3_stmt *Stmt = PrepareQuery(Database,
 			"SELECT WorldID, CharacterID, AccountID, Name,"
@@ -963,8 +958,7 @@ bool GetCharacterLoginData(TDatabase *Database,
 	return true;
 }
 
-bool GetCharacterProfile(TDatabase *Database,
-		const char *CharacterName, TCharacterProfile *Character){
+bool GetCharacterProfile(TDatabase *Database, const char *CharacterName, TCharacterProfile *Character){
 	ASSERT(Database != NULL && CharacterName != NULL && Character != NULL);
 	sqlite3_stmt *Stmt = PrepareQuery(Database,
 			"SELECT C.Name, W.Name, C.Sex, C.Guild, C.Rank, C.Title, C.Level,"
@@ -1014,8 +1008,7 @@ bool GetCharacterProfile(TDatabase *Database,
 	return true;
 }
 
-bool GetCharacterRight(TDatabase *Database,
-		int CharacterID, const char *Right, bool *Result){
+bool GetCharacterRight(TDatabase *Database, int CharacterID, const char *Right, bool *Result){
 	ASSERT(Database != NULL && Right != NULL && Result != NULL);
 	sqlite3_stmt *Stmt = PrepareQuery(Database,
 			"SELECT 1 FROM CharacterRights"
@@ -1071,8 +1064,7 @@ bool GetCharacterRights(TDatabase *Database, int CharacterID, DynamicArray<TChar
 	return true;
 }
 
-bool GetGuildLeaderStatus(TDatabase *Database,
-		int WorldID, int CharacterID, bool *Result){
+bool GetGuildLeaderStatus(TDatabase *Database, int WorldID, int CharacterID, bool *Result){
 	ASSERT(Database != NULL && Result != NULL);
 	// NOTE(fusion): Same as `DecrementIsOnline`.
 	sqlite3_stmt *Stmt = PrepareQuery(Database,
@@ -1188,8 +1180,7 @@ bool ClearIsOnline(TDatabase *Database, int WorldID, int *NumAffectedCharacters)
 }
 
 bool LogoutCharacter(TDatabase *Database, int WorldID, int CharacterID, int Level,
-		const char *Profession, const char *Residence, int LastLoginTime,
-		int TutorActivities){
+		const char *Profession, const char *Residence, int LastLoginTime, int TutorActivities){
 	ASSERT(Database != NULL && Profession != NULL && Residence != NULL);
 	sqlite3_stmt *Stmt = PrepareQuery(Database,
 			"UPDATE Characters"

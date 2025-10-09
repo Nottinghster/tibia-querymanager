@@ -800,8 +800,7 @@ bool IncrementIsOnline(TDatabase *Database, int WorldID, int CharacterID);
 bool DecrementIsOnline(TDatabase *Database, int WorldID, int CharacterID);
 bool ClearIsOnline(TDatabase *Database, int WorldID, int *NumAffectedCharacters);
 bool LogoutCharacter(TDatabase *Database, int WorldID, int CharacterID, int Level,
-		const char *Profession, const char *Residence, int LastLoginTime,
-		int TutorActivities);
+		const char *Profession, const char *Residence, int LastLoginTime, int TutorActivities);
 bool GetCharacterIndexEntries(TDatabase *Database, int WorldID, int MinimumCharacterID,
 		int MaxEntries, int *NumEntries, TCharacterIndexEntry *Entries);
 bool InsertCharacterDeath(TDatabase *Database, int WorldID, int CharacterID, int Level,
