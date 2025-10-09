@@ -153,6 +153,16 @@ bool StringCopy(char *Dest, int DestCapacity, const char *Src){
 	return StringCopyN(Dest, DestCapacity, Src, SrcLength);
 }
 
+uint32 HashString(const char *String){
+	// FNV1a 32-bits
+	uint32 Hash = 0x811C9DC5U;
+	for(int i = 0; String[i] != 0; i += 1){
+		Hash ^= (uint32)String[i];
+		Hash *= 0x01000193U;
+	}
+	return Hash;
+}
+
 bool ParseIPAddress(const char *String, int *OutAddr){
 	if(StringEmpty(String)){
 		LOG_ERR("Empty IP Address");

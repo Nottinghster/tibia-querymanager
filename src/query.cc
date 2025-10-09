@@ -25,123 +25,61 @@ struct TWorker{
 	pthread_t Thread;
 };
 
+static int g_NumWorkers;
 static TWorker *g_Workers;
 static TQueryQueue *g_QueryQueue;
 
-// Query Request
+// Query Name
 //==============================================================================
-TWriteBuffer QueryBeginRequest(TQuery *Query, int QueryType){
-	Query->Request = TReadBuffer{};
-	TWriteBuffer WriteBuffer = TWriteBuffer(Query->Buffer, Query->BufferSize);
-	WriteBuffer.Write8((uint8)QueryType);
-	return WriteBuffer;
-}
-
-bool QueryFinishRequest(TQuery *Query, TWriteBuffer WriteBuffer){
-	ASSERT(WriteBuffer.Buffer   == Query->Buffer
-		&& WriteBuffer.Size     == Query->BufferSize
-		&& WriteBuffer.Position >= 1);
-	bool Result = !WriteBuffer.Overflowed();
-	if(Result){
-		Query->Request = TReadBuffer(WriteBuffer.Buffer, WriteBuffer.Position);
+const char *QueryName(int QueryType){
+	const char *Name = "UNKNOWN";
+	switch(QueryType){
+		case QUERY_LOGIN:                    Name = "LOGIN"; break;
+		case QUERY_INTERNAL_RESOLVE_WORLD:   Name = "INTERNAL_RESOLVE_WORLD"; break;
+		case QUERY_CHECK_ACCOUNT_PASSWORD:   Name = "CHECK_ACCOUNT_PASSWORD"; break;
+		case QUERY_LOGIN_ACCOUNT:            Name = "LOGIN_ACCOUNT"; break;
+		case QUERY_LOGIN_ADMIN:              Name = "LOGIN_ADMIN"; break;
+		case QUERY_LOGIN_GAME:               Name = "LOGIN_GAME"; break;
+		case QUERY_LOGOUT_GAME:              Name = "LOGOUT_GAME"; break;
+		case QUERY_SET_NAMELOCK:             Name = "SET_NAMELOCK"; break;
+		case QUERY_BANISH_ACCOUNT:           Name = "BANISH_ACCOUNT"; break;
+		case QUERY_SET_NOTATION:             Name = "SET_NOTATION"; break;
+		case QUERY_REPORT_STATEMENT:         Name = "REPORT_STATEMENT"; break;
+		case QUERY_BANISH_IP_ADDRESS:        Name = "BANISH_IP_ADDRESS"; break;
+		case QUERY_LOG_CHARACTER_DEATH:      Name = "LOG_CHARACTER_DEATH"; break;
+		case QUERY_ADD_BUDDY:                Name = "ADD_BUDDY"; break;
+		case QUERY_REMOVE_BUDDY:             Name = "REMOVE_BUDDY"; break;
+		case QUERY_DECREMENT_IS_ONLINE:      Name = "DECREMENT_IS_ONLINE"; break;
+		case QUERY_FINISH_AUCTIONS:          Name = "FINISH_AUCTIONS"; break;
+		case QUERY_TRANSFER_HOUSES:          Name = "TRANSFER_HOUSES"; break;
+		case QUERY_EVICT_FREE_ACCOUNTS:      Name = "EVICT_FREE_ACCOUNTS"; break;
+		case QUERY_EVICT_DELETED_CHARACTERS: Name = "EVICT_DELETED_CHARACTERS"; break;
+		case QUERY_EVICT_EX_GUILDLEADERS:    Name = "EVICT_EX_GUILDLEADERS"; break;
+		case QUERY_INSERT_HOUSE_OWNER:       Name = "INSERT_HOUSE_OWNER"; break;
+		case QUERY_UPDATE_HOUSE_OWNER:       Name = "UPDATE_HOUSE_OWNER"; break;
+		case QUERY_DELETE_HOUSE_OWNER:       Name = "DELETE_HOUSE_OWNER"; break;
+		case QUERY_GET_HOUSE_OWNERS:         Name = "GET_HOUSE_OWNERS"; break;
+		case QUERY_GET_AUCTIONS:             Name = "GET_AUCTIONS"; break;
+		case QUERY_START_AUCTION:            Name = "START_AUCTION"; break;
+		case QUERY_INSERT_HOUSES:            Name = "INSERT_HOUSES"; break;
+		case QUERY_CLEAR_IS_ONLINE:          Name = "CLEAR_IS_ONLINE"; break;
+		case QUERY_CREATE_PLAYERLIST:        Name = "CREATE_PLAYERLIST"; break;
+		case QUERY_LOG_KILLED_CREATURES:     Name = "LOG_KILLED_CREATURES"; break;
+		case QUERY_LOAD_PLAYERS:             Name = "LOAD_PLAYERS"; break;
+		case QUERY_EXCLUDE_FROM_AUCTIONS:    Name = "EXCLUDE_FROM_AUCTIONS"; break;
+		case QUERY_CANCEL_HOUSE_TRANSFER:    Name = "CANCEL_HOUSE_TRANSFER"; break;
+		case QUERY_LOAD_WORLD_CONFIG:        Name = "LOAD_WORLD_CONFIG"; break;
+		case QUERY_CREATE_ACCOUNT:           Name = "CREATE_ACCOUNT"; break;
+		case QUERY_CREATE_CHARACTER:         Name = "CREATE_CHARACTER"; break;
+		case QUERY_GET_ACCOUNT_SUMMARY:      Name = "GET_ACCOUNT_SUMMARY"; break;
+		case QUERY_GET_CHARACTER_PROFILE:    Name = "GET_CHARACTER_PROFILE"; break;
+		case QUERY_GET_WORLDS:               Name = "GET_WORLDS"; break;
+		case QUERY_GET_ONLINE_CHARACTERS:    Name = "GET_ONLINE_CHARACTERS"; break;
+		case QUERY_GET_KILL_STATISTICS:      Name = "GET_KILL_STATISTICS"; break;
+		default:                             Name = "UNKNOWN"; break;
 	}
-	return Result;
+	return Name;
 }
-
-bool QueryInternalResolveWorld(TQuery *Query, const char *World){
-	TWriteBuffer WriteBuffer = QueryBeginRequest(Query, QUERY_INTERNAL_RESOLVE_WORLD);
-	WriteBuffer.WriteString(World);
-	return QueryFinishRequest(Query, WriteBuffer);
-}
-
-// Query Response
-//==============================================================================
-TWriteBuffer *QueryBeginResponse(TQuery *Query, int Status){
-	Query->QueryStatus = Status;
-	Query->Response = TWriteBuffer(Query->Buffer, Query->BufferSize);
-	Query->Response.Write16(0);
-	Query->Response.Write8((uint8)Status);
-	return &Query->Response;
-}
-
-bool QueryFinishResponse(TQuery *Query){
-	TWriteBuffer *Response = &Query->Response;
-	if(Response->Position <= 2){
-		LOG_ERR("Invalid response size");
-		return false;
-	}
-
-	int PayloadSize = Response->Position - 2;
-	if(PayloadSize < 0xFFFF){
-		Response->Rewrite16(0, (uint16)PayloadSize);
-	}else{
-		Response->Rewrite16(0, 0xFFFF);
-		Response->Insert32(2, (uint32)PayloadSize);
-	}
-
-	return !Response->Overflowed();
-}
-
-void QueryOk(TQuery *Query){
-	QueryBeginResponse(Query, QUERY_STATUS_OK);
-	QueryFinishResponse(Query);
-}
-
-void QueryError(TQuery *Query, int ErrorCode){
-	TWriteBuffer *Response = QueryBeginResponse(Query, QUERY_STATUS_ERROR);
-	Response->Write8((uint8)ErrorCode);
-	QueryFinishResponse(Query);
-}
-
-void QueryFailed(TQuery *Query){
-	QueryBeginResponse(Query, QUERY_STATUS_FAILED);
-	QueryFinishResponse(Query);
-}
-
-
-// Query Processing
-//==============================================================================
-static bool ProcessInternalResolveWorld(TDatabase *Database, TQuery *Query);
-static bool ProcessCheckAccountPassword(TDatabase *Database, TQuery *Query);
-static bool ProcessLoginAccount(TDatabase *Database, TQuery *Query);
-static bool ProcessLoginAdmin(TDatabase *Database, TQuery *Query);
-static bool ProcessLoginGame(TDatabase *Database, TQuery *Query);
-static bool ProcessLogoutGame(TDatabase *Database, TQuery *Query);
-static bool ProcessSetNamelock(TDatabase *Database, TQuery *Query);
-static bool ProcessBanishAccount(TDatabase *Database, TQuery *Query);
-static bool ProcessSetNotation(TDatabase *Database, TQuery *Query);
-static bool ProcessReportStatement(TDatabase *Database, TQuery *Query);
-static bool ProcessBanishIpAddress(TDatabase *Database, TQuery *Query);
-static bool ProcessLogCharacterDeath(TDatabase *Database, TQuery *Query);
-static bool ProcessAddBuddy(TDatabase *Database, TQuery *Query);
-static bool ProcessRemoveBuddy(TDatabase *Database, TQuery *Query);
-static bool ProcessDecrementIsOnline(TDatabase *Database, TQuery *Query);
-static bool ProcessFinishAuctions(TDatabase *Database, TQuery *Query);
-static bool ProcessTransferHouses(TDatabase *Database, TQuery *Query);
-static bool ProcessEvictFreeAccounts(TDatabase *Database, TQuery *Query);
-static bool ProcessEvictDeletedCharacters(TDatabase *Database, TQuery *Query);
-static bool ProcessEvictExGuildleaders(TDatabase *Database, TQuery *Query);
-static bool ProcessInsertHouseOwner(TDatabase *Database, TQuery *Query);
-static bool ProcessUpdateHouseOwner(TDatabase *Database, TQuery *Query);
-static bool ProcessDeleteHouseOwner(TDatabase *Database, TQuery *Query);
-static bool ProcessGetHouseOwners(TDatabase *Database, TQuery *Query);
-static bool ProcessGetAuctions(TDatabase *Database, TQuery *Query);
-static bool ProcessStartAuction(TDatabase *Database, TQuery *Query);
-static bool ProcessInsertHouses(TDatabase *Database, TQuery *Query);
-static bool ProcessClearIsOnline(TDatabase *Database, TQuery *Query);
-static bool ProcessCreatePlayerlist(TDatabase *Database, TQuery *Query);
-static bool ProcessLogKilledCreatures(TDatabase *Database, TQuery *Query);
-static bool ProcessLoadPlayers(TDatabase *Database, TQuery *Query);
-static bool ProcessExcludeFromAuctions(TDatabase *Database, TQuery *Query);
-static bool ProcessCancelHouseTransfer(TDatabase *Database, TQuery *Query);
-static bool ProcessLoadWorldConfig(TDatabase *Database, TQuery *Query);
-static bool ProcessCreateAccount(TDatabase *Database, TQuery *Query);
-static bool ProcessCreateCharacter(TDatabase *Database, TQuery *Query);
-static bool ProcessGetAccountSummary(TDatabase *Database, TQuery *Query);
-static bool ProcessGetCharacterProfile(TDatabase *Database, TQuery *Query);
-static bool ProcessGetWorlds(TDatabase *Database, TQuery *Query);
-static bool ProcessGetOnlineCharacters(TDatabase *Database, TQuery *Query);
-static bool ProcessGetKillStatistics(TDatabase *Database, TQuery *Query);
 
 // Query Queue and Workers
 //==============================================================================
@@ -232,26 +170,26 @@ static void *WorkerThread(void *Data){
 	ASSERT(Data != NULL);
 	TWorker *Worker = (TWorker*)Data;
 	if(AtomicLoad(&Worker->Stop)){
-		LOG_WARN("Worker#%d Stopping on entry...", Worker->WorkerID);
+		LOG_WARN("Worker#%d: Stopping on entry...", Worker->WorkerID);
 		AtomicStore(&Worker->Status, WORKER_STATUS_DONE);
 		return NULL;
 	}
 
 	TDatabase *Database = DatabaseOpen();
 	if(Database == NULL){
-		LOG_ERR("Worker#%d Failed to connect to database", Worker->WorkerID);
+		LOG_ERR("Worker#%d: Failed to connect to database", Worker->WorkerID);
 		AtomicStore(&Worker->Status, WORKER_STATUS_DONE);
 		return NULL;
 	}
 
-	LOG("Worker#%d ACTIVE...", Worker->WorkerID);
+	LOG("Worker#%d: ACTIVE...", Worker->WorkerID);
 	AtomicStore(&Worker->Status, WORKER_STATUS_ACTIVE);
 	while(TQuery *Query = QueryDequeue(&Worker->Stop)){
 		bool (*ProcessQuery)(TDatabase*, TQuery*) = NULL;
 		Query->QueryType = Query->Request.Read8();
-		/*switch(Query->QueryType){
+		switch(Query->QueryType){
 			case QUERY_INTERNAL_RESOLVE_WORLD:		ProcessQuery = ProcessInternalResolveWorld; break;
-			case QUERY_CHECK_ACCOUNT_PASSWORD:		ProcessQuery = ProcessCheckAccountPassword; break;
+/*			case QUERY_CHECK_ACCOUNT_PASSWORD:		ProcessQuery = ProcessCheckAccountPassword; break;
 			case QUERY_LOGIN_ACCOUNT:				ProcessQuery = ProcessLoginAccount; break;
 			case QUERY_LOGIN_ADMIN:					ProcessQuery = ProcessLoginAdmin; break;
 			case QUERY_LOGIN_GAME:					ProcessQuery = ProcessLoginGame; break;
@@ -291,7 +229,8 @@ static void *WorkerThread(void *Data){
 			case QUERY_GET_WORLDS:					ProcessQuery = ProcessGetWorlds; break;
 			case QUERY_GET_ONLINE_CHARACTERS:		ProcessQuery = ProcessGetOnlineCharacters; break;
 			case QUERY_GET_KILL_STATISTICS:			ProcessQuery = ProcessGetKillStatistics; break;
-		}*/
+*/
+		}
 
 		if(ProcessQuery != NULL && DatabaseCheckpoint(Database)){
 			// NOTE(fusion): A minimum of 1 attempt is ASSUMED.
@@ -302,6 +241,12 @@ static void *WorkerThread(void *Data){
 					break;
 				}
 				Attempts -= 1;
+
+				// NOTE(fusion): This one is important because we want to know
+				// whether some query is failing too often, in which case there
+				// may be a problem with it.
+				LOG_WARN("Worker#%d: Query %s failed, retrying...",
+						Worker->WorkerID, QueryName(Query->QueryType));
 			}
 		}else{
 			QueryFailed(Query);
@@ -310,7 +255,7 @@ static void *WorkerThread(void *Data){
 		QueryDone(Query);
 	}
 
-	LOG("Worker#%d DONE...", Worker->WorkerID);
+	LOG("Worker#%d: DONE...", Worker->WorkerID);
 	DatabaseClose(Database);
 	AtomicStore(&Worker->Status, WORKER_STATUS_DONE);
 	return NULL;
@@ -331,9 +276,13 @@ bool InitQuery(void){
 	g_QueryQueue->MaxQueries = 2 * g_Config.MaxConnections;
 	g_QueryQueue->Queries = (TQuery**)calloc(g_QueryQueue->MaxQueries, sizeof(TQuery*));
 
-	int NumWorkers = g_Config.QueryWorkerThreads;
-	g_Workers = (TWorker*)calloc(NumWorkers, sizeof(TWorker));
-	for(int i = 0; i < NumWorkers; i += 1){
+	g_NumWorkers = g_Config.QueryWorkerThreads;
+	if(g_NumWorkers > DatabaseMaxConcurrency()){
+		g_NumWorkers = DatabaseMaxConcurrency();
+	}
+
+	g_Workers = (TWorker*)calloc(g_NumWorkers, sizeof(TWorker));
+	for(int i = 0; i < g_NumWorkers; i += 1){
 		TWorker *Worker = &g_Workers[i];
 		Worker->WorkerID = i;
 		AtomicStore(&Worker->Status, WORKER_STATUS_SPAWNING);
@@ -350,7 +299,7 @@ bool InitQuery(void){
 		int NumWorkersSpawning = 0;
 		int NumWorkersActive = 0;
 		int NumWorkersDone = 0;
-		for(int i = 0; i < NumWorkers; i += 1){
+		for(int i = 0; i < g_NumWorkers; i += 1){
 			int Status = AtomicLoad(&g_Workers[i].Status);
 			if(Status == WORKER_STATUS_SPAWNING){
 				NumWorkersSpawning += 1;
@@ -373,7 +322,7 @@ bool InitQuery(void){
 			return false;
 		}
 
-		ASSERT(NumWorkersActive == NumWorkers);
+		ASSERT(NumWorkersActive == g_NumWorkers);
 		break;
 	}
 
@@ -384,15 +333,15 @@ void ExitQuery(void){
 	if(g_Workers != NULL){
 		ASSERT(g_QueryQueue != NULL);
 
-		for(int i = 0; i < g_Config.QueryWorkerThreads; i += 1){
+		for(int i = 0; i < g_NumWorkers; i += 1){
 			AtomicStore(&g_Workers[i].Stop, 1);
 		}
 
 		pthread_cond_broadcast(&g_QueryQueue->WorkAvailable);
-		for(int i = 0; i < g_Config.QueryWorkerThreads; i += 1){
+		for(int i = 0; i < g_NumWorkers; i += 1){
 			// IMPORTANT(fusion): There is no "invalid" pthread handle so this
 			// is non-standard behaviour. Nevertheless the game server uses it
-			// and seems to be consistent on Linux, which is what matters at
+			// and it seems to be consistent on Linux, which is what matters at
 			// the end of the day.
 			if(g_Workers[i].Thread != 0){
 				pthread_join(g_Workers[i].Thread, NULL);
@@ -419,6 +368,164 @@ void ExitQuery(void){
 		free(g_QueryQueue);
 	}
 }
+
+// Query Request
+//==============================================================================
+TWriteBuffer QueryBeginRequest(TQuery *Query, int QueryType){
+	Query->Request = TReadBuffer{};
+	TWriteBuffer WriteBuffer = TWriteBuffer(Query->Buffer, Query->BufferSize);
+	WriteBuffer.Write8((uint8)QueryType);
+	return WriteBuffer;
+}
+
+bool QueryFinishRequest(TQuery *Query, TWriteBuffer WriteBuffer){
+	ASSERT(WriteBuffer.Buffer   == Query->Buffer
+		&& WriteBuffer.Size     == Query->BufferSize
+		&& WriteBuffer.Position >= 1);
+	bool Result = !WriteBuffer.Overflowed();
+	if(Result){
+		Query->Request = TReadBuffer(WriteBuffer.Buffer, WriteBuffer.Position);
+	}
+	return Result;
+}
+
+bool QueryInternalResolveWorld(TQuery *Query, const char *World){
+	TWriteBuffer WriteBuffer = QueryBeginRequest(Query, QUERY_INTERNAL_RESOLVE_WORLD);
+	WriteBuffer.WriteString(World);
+	return QueryFinishRequest(Query, WriteBuffer);
+}
+
+// Query Response
+//==============================================================================
+TWriteBuffer *QueryBeginResponse(TQuery *Query, int Status){
+	Query->QueryStatus = Status;
+	Query->Response = TWriteBuffer(Query->Buffer, Query->BufferSize);
+	Query->Response.Write16(0);
+	Query->Response.Write8((uint8)Status);
+	return &Query->Response;
+}
+
+bool QueryFinishResponse(TQuery *Query){
+	TWriteBuffer *Response = &Query->Response;
+	if(Response->Position <= 2){
+		LOG_ERR("Invalid response size");
+		return false;
+	}
+
+	int PayloadSize = Response->Position - 2;
+	if(PayloadSize < 0xFFFF){
+		Response->Rewrite16(0, (uint16)PayloadSize);
+	}else{
+		Response->Rewrite16(0, 0xFFFF);
+		Response->Insert32(2, (uint32)PayloadSize);
+	}
+
+	return !Response->Overflowed();
+}
+
+void QueryOk(TQuery *Query){
+	QueryBeginResponse(Query, QUERY_STATUS_OK);
+	QueryFinishResponse(Query);
+}
+
+void QueryError(TQuery *Query, int ErrorCode){
+	TWriteBuffer *Response = QueryBeginResponse(Query, QUERY_STATUS_ERROR);
+	Response->Write8((uint8)ErrorCode);
+	QueryFinishResponse(Query);
+}
+
+void QueryFailed(TQuery *Query){
+	QueryBeginResponse(Query, QUERY_STATUS_FAILED);
+	QueryFinishResponse(Query);
+}
+
+// Query Processing
+//==============================================================================
+// IMPORTANT(fusion): Query functions will return TRUE when they executed normally,
+// and FALSE when they were interrupted by some unexpected error such as a database
+// failure. The query response should only be written at the very end, when we know
+// it has SUCCEEDED, so that request data is kept intact (because they share the
+// query buffer) if the caller decides to retry the operation.
+
+// NOTE(fusion): These should be used with query functions to reduce clutter.
+#define QUERY_STOP_IF(Cond)					\
+	do{										\
+		if(Cond){							\
+			return false;					\
+		}									\
+	}while(0)
+
+#define QUERY_ERROR_IF(Cond, ErrorCode)		\
+	do{										\
+		if(Cond){							\
+			QueryError(Query, ErrorCode);	\
+			return true;					\
+		}									\
+	}while(0)
+
+#define QUERY_FAIL_IF(Cond) 				\
+	do{										\
+		if(Cond){							\
+			QueryFailed(Query);				\
+			return true;					\
+		}									\
+	}while(0)
+
+bool ProcessInternalResolveWorld(TDatabase *Database, TQuery *Query){
+	char World[30];
+	TReadBuffer Request = Query->Request;
+	Request.ReadString(World, sizeof(World));
+
+	int WorldID;
+	QUERY_STOP_IF(!GetWorldID(Database, World, &WorldID));
+	QUERY_FAIL_IF(WorldID <= 0);
+
+	Query->WorldID = WorldID;
+	QueryOk(Query);
+	return true;
+}
+
+bool ProcessCheckAccountPassword(TDatabase *Database, TQuery *Query);
+bool ProcessLoginAccount(TDatabase *Database, TQuery *Query);
+bool ProcessLoginAdmin(TDatabase *Database, TQuery *Query);
+bool ProcessLoginGame(TDatabase *Database, TQuery *Query);
+bool ProcessLogoutGame(TDatabase *Database, TQuery *Query);
+bool ProcessSetNamelock(TDatabase *Database, TQuery *Query);
+bool ProcessBanishAccount(TDatabase *Database, TQuery *Query);
+bool ProcessSetNotation(TDatabase *Database, TQuery *Query);
+bool ProcessReportStatement(TDatabase *Database, TQuery *Query);
+bool ProcessBanishIpAddress(TDatabase *Database, TQuery *Query);
+bool ProcessLogCharacterDeath(TDatabase *Database, TQuery *Query);
+bool ProcessAddBuddy(TDatabase *Database, TQuery *Query);
+bool ProcessRemoveBuddy(TDatabase *Database, TQuery *Query);
+bool ProcessDecrementIsOnline(TDatabase *Database, TQuery *Query);
+bool ProcessFinishAuctions(TDatabase *Database, TQuery *Query);
+bool ProcessTransferHouses(TDatabase *Database, TQuery *Query);
+bool ProcessEvictFreeAccounts(TDatabase *Database, TQuery *Query);
+bool ProcessEvictDeletedCharacters(TDatabase *Database, TQuery *Query);
+bool ProcessEvictExGuildleaders(TDatabase *Database, TQuery *Query);
+bool ProcessInsertHouseOwner(TDatabase *Database, TQuery *Query);
+bool ProcessUpdateHouseOwner(TDatabase *Database, TQuery *Query);
+bool ProcessDeleteHouseOwner(TDatabase *Database, TQuery *Query);
+bool ProcessGetHouseOwners(TDatabase *Database, TQuery *Query);
+bool ProcessGetAuctions(TDatabase *Database, TQuery *Query);
+bool ProcessStartAuction(TDatabase *Database, TQuery *Query);
+bool ProcessInsertHouses(TDatabase *Database, TQuery *Query);
+bool ProcessClearIsOnline(TDatabase *Database, TQuery *Query);
+bool ProcessCreatePlayerlist(TDatabase *Database, TQuery *Query);
+bool ProcessLogKilledCreatures(TDatabase *Database, TQuery *Query);
+bool ProcessLoadPlayers(TDatabase *Database, TQuery *Query);
+bool ProcessExcludeFromAuctions(TDatabase *Database, TQuery *Query);
+bool ProcessCancelHouseTransfer(TDatabase *Database, TQuery *Query);
+bool ProcessLoadWorldConfig(TDatabase *Database, TQuery *Query);
+bool ProcessCreateAccount(TDatabase *Database, TQuery *Query);
+bool ProcessCreateCharacter(TDatabase *Database, TQuery *Query);
+bool ProcessGetAccountSummary(TDatabase *Database, TQuery *Query);
+bool ProcessGetCharacterProfile(TDatabase *Database, TQuery *Query);
+bool ProcessGetWorlds(TDatabase *Database, TQuery *Query);
+bool ProcessGetOnlineCharacters(TDatabase *Database, TQuery *Query);
+bool ProcessGetKillStatistics(TDatabase *Database, TQuery *Query);
+
 
 // TODO(fusion): These are the old query processing functions. The new ones will
 // be very similar, except that we want a way to tell whether there was a database
@@ -1844,6 +1951,37 @@ void ProcessCreateAccountQuery(TConnection *Connection, TReadBuffer *Buffer){
 	}
 
 	SendQueryStatusOk(Connection);
+}
+
+bool ProcessCreateAccountQuery(TConnection *Connection, TReadBuffer *Buffer){
+	// TODO(fusion): We'd ideally want to automatically generate an account number
+	// and return it in case of success but that would also require a more robust
+	// website infrastructure with verification e-mails, etc...
+	char Email[100];
+	char Password[30];
+	int AccountID = (int)Buffer->Read32();
+	Buffer->ReadString(Email, sizeof(Email));
+	Buffer->ReadString(Password, sizeof(Password));
+
+	// NOTE(fusion): Inputs should be checked before hand.
+	QUERY_FAIL_IF(AccountID <= 0);
+	QUERY_FAIL_IF(StringEmpty(Email));
+	QUERY_FAIL_IF(StringEmpty(Password));
+
+	uint8 Auth[64];
+	QUERY_FAIL_IF(!GenerateAuth(Password, Auth, sizeof(Auth)));
+
+	TransactionScope Tx("CreateAccount");
+	QUERY_RETRY_IF(!Tx.Begin(Database));
+	QUERY_RETRY_IF(!AccountNumberExists(Database, AccountID, &AccountExists));
+	QUERY_ERROR_IF(AccountExists, 1);
+	QUERY_RETRY_IF(!AccountEmailExists(Database, Email, &AccountExists));
+	QUERY_ERROR_IF(AccountExists, 2);
+	QUERY_FAIL_IF(!CreateAccount(AccountID, Email, Auth, sizeof(Auth)));
+	QUERY_RETRY_IF(!Tx.Commit());
+
+	QueryOk(Query);
+	return true;
 }
 
 void ProcessCreateCharacterQuery(TConnection *Connection, TReadBuffer *Buffer){

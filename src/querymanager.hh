@@ -119,6 +119,7 @@ bool StringEq(const char *A, const char *B);
 bool StringEqCI(const char *A, const char *B);
 bool StringCopyN(char *Dest, int DestCapacity, const char *Src, int SrcLength);
 bool StringCopy(char *Dest, int DestCapacity, const char *Src);
+uint32 HashString(const char *String);
 bool ParseIPAddress(const char *String, int *OutAddr);
 
 bool ReadBooleanConfig(bool *Dest, const char *Val);
@@ -607,7 +608,7 @@ struct TWorld{
 struct TWorldConfig{
 	int Type;
 	int RebootTime;
-	int IPAddress;
+	char HostName[100];
 	int Port;
 	int MaxPlayers;
 	int PremiumPlayerBuffer;
@@ -754,117 +755,108 @@ struct TOnlineCharacter{
 };
 
 struct TDatabase;
-//struct TDatabaseTx;
 struct TransactionScope{
 private:
 	const char *m_Context;
-	bool m_Running;
+	TDatabase *m_Database;
 
 public:
 	TransactionScope(const char *Context);
 	~TransactionScope(void);
-	bool Begin(void);
+	bool Begin(TDatabase *Database);
 	bool Commit(void);
 };
 
-// NOTE(fusion): Primary tables.
-int GetWorldID(const char *WorldName);
-bool GetWorlds(DynamicArray<TWorld> *Worlds);
-bool GetWorldConfig(int WorldID, TWorldConfig *WorldConfig);
-bool AccountExists(int AccountID, const char *Email);
-bool AccountNumberExists(int AccountID);
-bool AccountEmailExists(const char *Email);
-bool CreateAccount(int AccountID, const char *Email, const uint8 *Auth, int AuthSize);
-bool GetAccountData(int AccountID, TAccount *Account);
-int GetAccountOnlineCharacters(int AccountID);
-bool IsCharacterOnline(int CharacterID);
-bool ActivatePendingPremiumDays(int AccountID);
-bool GetCharacterEndpoints(int AccountID, DynamicArray<TCharacterEndpoint> *Characters);
-bool GetCharacterSummaries(int AccountID, DynamicArray<TCharacterSummary> *Characters);
-bool CharacterNameExists(const char *Name);
-bool CreateCharacter(int WorldID, int AccountID, const char *Name, int Sex);
-int GetCharacterID(int WorldID, const char *CharacterName);
-bool GetCharacterLoginData(const char *CharacterName, TCharacterLoginData *Character);
-bool GetCharacterProfile(const char *CharacterName, TCharacterProfile *Character);
-bool GetCharacterRight(int CharacterID, const char *Right);
-bool GetCharacterRights(int CharacterID, DynamicArray<TCharacterRight> *Rights);
-bool GetGuildLeaderStatus(int WorldID, int CharacterID);
-bool IncrementIsOnline(int WorldID, int CharacterID);
-bool DecrementIsOnline(int WorldID, int CharacterID);
-bool ClearIsOnline(int WorldID, int *NumAffectedCharacters);
-bool LogoutCharacter(int WorldID, int CharacterID, int Level,
-		const char *Profession, const char *Residence, int LastLoginTime,
-		int TutorActivities);
-bool GetCharacterIndexEntries(int WorldID, int MinimumCharacterID,
-		int MaxEntries, int *NumEntries, TCharacterIndexEntry *Entries);
-bool InsertCharacterDeath(int WorldID, int CharacterID, int Level,
-		int OffenderID, const char *Remark, bool Unjustified, int Timestamp);
-bool InsertBuddy(int WorldID, int AccountID, int BuddyID);
-bool DeleteBuddy(int WorldID, int AccountID, int BuddyID);
-bool GetBuddies(int WorldID, int AccountID, DynamicArray<TAccountBuddy> *Buddies);
-bool GetWorldInvitation(int WorldID, int CharacterID);
-bool InsertLoginAttempt(int AccountID, int IPAddress, bool Failed);
-int GetAccountFailedLoginAttempts(int AccountID, int TimeWindow);
-int GetIPAddressFailedLoginAttempts(int IPAddress, int TimeWindow);
-
-// NOTE(fusion): House tables.
-bool FinishHouseAuctions(int WorldID, DynamicArray<THouseAuction> *Auctions);
-bool FinishHouseTransfers(int WorldID, DynamicArray<THouseTransfer> *Transfers);
-bool GetFreeAccountEvictions(int WorldID, DynamicArray<THouseEviction> *Evictions);
-bool GetDeletedCharacterEvictions(int WorldID, DynamicArray<THouseEviction> *Evictions);
-bool InsertHouseOwner(int WorldID, int HouseID, int OwnerID, int PaidUntil);
-bool UpdateHouseOwner(int WorldID, int HouseID, int OwnerID, int PaidUntil);
-bool DeleteHouseOwner(int WorldID, int HouseID);
-bool GetHouseOwners(int WorldID, DynamicArray<THouseOwner> *Owners);
-bool GetHouseAuctions(int WorldID, DynamicArray<int> *Auctions);
-bool StartHouseAuction(int WorldID, int HouseID);
-bool DeleteHouses(int WorldID);
-bool InsertHouses(int WorldID, int NumHouses, THouse *Houses);
-bool ExcludeFromAuctions(int WorldID, int CharacterID, int Duration, int BanishmentID);
-
-// NOTE(fusion): Banishment tables.
-bool IsCharacterNamelocked(int CharacterID);
-TNamelockStatus GetNamelockStatus(int CharacterID);
-bool InsertNamelock(int CharacterID, int IPAddress, int GamemasterID,
-		const char *Reason, const char *Comment);
-bool IsAccountBanished(int AccountID);
-TBanishmentStatus GetBanishmentStatus(int CharacterID);
-bool InsertBanishment(int CharacterID, int IPAddress, int GamemasterID,
-		const char *Reason, const char *Comment, bool FinalWarning,
-		int Duration, int *BanishmentID);
-int GetNotationCount(int CharacterID);
-bool InsertNotation(int CharacterID, int IPAddress, int GamemasterID,
-		const char *Reason, const char *Comment);
-bool IsIPBanished(int IPAddress);
-bool InsertIPBanishment(int CharacterID, int IPAddress, int GamemasterID,
-		const char *Reason, const char *Comment, int Duration);
-bool IsStatementReported(int WorldID, TStatement *Statement);
-bool InsertStatements(int WorldID, int NumStatements, TStatement *Statements);
-bool InsertReportedStatement(int WorldID, TStatement *Statement, int BanishmentID,
-		int ReporterID, const char *Reason, const char *Comment);
-
-// NOTE(fusion): Info tables.
-bool GetKillStatistics(int WorldID, DynamicArray<TKillStatistics> *Stats);
-bool MergeKillStatistics(int WorldID, int NumStats, TKillStatistics *Stats);
-bool GetOnlineCharacters(int WorldID, DynamicArray<TOnlineCharacter> *Characters);
-bool DeleteOnlineCharacters(int WorldID);
-bool InsertOnlineCharacters(int WorldID, int NumCharacters, TOnlineCharacter *Characters);
-bool CheckOnlineRecord(int WorldID, int NumCharacters, bool *NewRecord);
-
-// NOTE(fusion): Internal database utility and initialization.
-bool FileExists(const char *FileName);
-bool ExecFile(const char *FileName);
-bool ExecInternal(const char *Format, ...) ATTR_PRINTF(1, 2);
-bool GetPragmaInt(const char *Name, int *OutValue);
-bool InitDatabaseSchema(void);
-bool UpgradeDatabaseSchema(int UserVersion);
-bool CheckDatabaseSchema(void);
-bool InitDatabase(void);
-void ExitDatabase(void);
-
+// NOTE(fusion): Database management.
 TDatabase *DatabaseOpen(void);
 void DatabaseClose(TDatabase *Database);
+int DatabaseChanges(TDatabase *Database);
 bool DatabaseCheckpoint(TDatabase *Database);
+int DatabaseMaxConcurrency(void);
+
+// NOTE(fusion): Primary tables.
+bool GetWorldID(TDatabase *Database, const char *World, int *WorldID);
+bool GetWorlds(TDatabase *Database, DynamicArray<TWorld> *Worlds);
+bool GetWorldConfig(TDatabase *Database, int WorldID, TWorldConfig *WorldConfig);
+bool AccountExists(TDatabase *Database, int AccountID, const char *Email, bool *Result);
+bool AccountNumberExists(TDatabase *Database, int AccountID, bool *Result);
+bool AccountEmailExists(TDatabase *Database, const char *Email, bool *Result);
+bool CreateAccount(TDatabase *Database, int AccountID, const char *Email, const uint8 *Auth, int AuthSize);
+bool GetAccountData(TDatabase *Database, int AccountID, TAccount *Account);
+bool GetAccountOnlineCharacters(TDatabase *Database, int AccountID, int *OnlineCharacters);
+bool IsCharacterOnline(TDatabase *Database, int CharacterID, bool *Result);
+bool ActivatePendingPremiumDays(TDatabase *Database, int AccountID);
+bool GetCharacterEndpoints(TDatabase *Database, int AccountID, DynamicArray<TCharacterEndpoint> *Characters);
+bool GetCharacterSummaries(TDatabase *Database, int AccountID, DynamicArray<TCharacterSummary> *Characters);
+bool CharacterNameExists(TDatabase *Database, const char *Name, bool *Result);
+bool CreateCharacter(TDatabase *Database, int WorldID, int AccountID, const char *Name, int Sex);
+bool GetCharacterID(TDatabase *Database, int WorldID, const char *CharacterName, int *CharacterID);
+bool GetCharacterLoginData(TDatabase *Database, const char *CharacterName, TCharacterLoginData *Character);
+bool GetCharacterProfile(TDatabase *Database, const char *CharacterName, TCharacterProfile *Character);
+bool GetCharacterRight(TDatabase *Database, int CharacterID, const char *Right, bool *Result);
+bool GetCharacterRights(TDatabase *Database, int CharacterID, DynamicArray<TCharacterRight> *Rights);
+bool GetGuildLeaderStatus(TDatabase *Database, int WorldID, int CharacterID, bool *Result);
+bool IncrementIsOnline(TDatabase *Database, int WorldID, int CharacterID);
+bool DecrementIsOnline(TDatabase *Database, int WorldID, int CharacterID);
+bool ClearIsOnline(TDatabase *Database, int WorldID, int *NumAffectedCharacters);
+bool LogoutCharacter(TDatabase *Database, int WorldID, int CharacterID, int Level,
+		const char *Profession, const char *Residence, int LastLoginTime,
+		int TutorActivities);
+bool GetCharacterIndexEntries(TDatabase *Database, int WorldID, int MinimumCharacterID,
+		int MaxEntries, int *NumEntries, TCharacterIndexEntry *Entries);
+bool InsertCharacterDeath(TDatabase *Database, int WorldID, int CharacterID, int Level,
+		int OffenderID, const char *Remark, bool Unjustified, int Timestamp);
+bool InsertBuddy(TDatabase *Database, int WorldID, int AccountID, int BuddyID);
+bool DeleteBuddy(TDatabase *Database, int WorldID, int AccountID, int BuddyID);
+bool GetBuddies(TDatabase *Database, int WorldID, int AccountID, DynamicArray<TAccountBuddy> *Buddies);
+bool GetWorldInvitation(TDatabase *Database, int WorldID, int CharacterID, bool *Result);
+bool InsertLoginAttempt(TDatabase *Database, int AccountID, int IPAddress, bool Failed);
+bool GetAccountFailedLoginAttempts(TDatabase *Database, int AccountID, int TimeWindow, int *Result);
+bool GetIPAddressFailedLoginAttempts(TDatabase *Database, int IPAddress, int TimeWindow, int *Result);
+
+// NOTE(fusion): House tables.
+bool FinishHouseAuctions(TDatabase *Database, int WorldID, DynamicArray<THouseAuction> *Auctions);
+bool FinishHouseTransfers(TDatabase *Database, int WorldID, DynamicArray<THouseTransfer> *Transfers);
+bool GetFreeAccountEvictions(TDatabase *Database, int WorldID, DynamicArray<THouseEviction> *Evictions);
+bool GetDeletedCharacterEvictions(TDatabase *Database, int WorldID, DynamicArray<THouseEviction> *Evictions);
+bool InsertHouseOwner(TDatabase *Database, int WorldID, int HouseID, int OwnerID, int PaidUntil);
+bool UpdateHouseOwner(TDatabase *Database, int WorldID, int HouseID, int OwnerID, int PaidUntil);
+bool DeleteHouseOwner(TDatabase *Database, int WorldID, int HouseID);
+bool GetHouseOwners(TDatabase *Database, int WorldID, DynamicArray<THouseOwner> *Owners);
+bool GetHouseAuctions(TDatabase *Database, int WorldID, DynamicArray<int> *Auctions);
+bool StartHouseAuction(TDatabase *Database, int WorldID, int HouseID);
+bool DeleteHouses(TDatabase *Database, int WorldID);
+bool InsertHouses(TDatabase *Database, int WorldID, int NumHouses, THouse *Houses);
+bool ExcludeFromAuctions(TDatabase *Database, int WorldID, int CharacterID, int Duration, int BanishmentID);
+
+// NOTE(fusion): Banishment tables.
+bool IsCharacterNamelocked(TDatabase *Database, int CharacterID, bool *Result);
+bool GetNamelockStatus(TDatabase *Database, int CharacterID, TNamelockStatus *Status);
+bool InsertNamelock(TDatabase *Database, int CharacterID, int IPAddress,
+		int GamemasterID, const char *Reason, const char *Comment);
+bool IsAccountBanished(TDatabase *Database, int AccountID, bool *Result);
+bool GetBanishmentStatus(TDatabase *Database, int CharacterID, TBanishmentStatus *Status);
+bool InsertBanishment(TDatabase *Database, int CharacterID, int IPAddress, int GamemasterID,
+		const char *Reason, const char *Comment, bool FinalWarning, int Duration, int *BanishmentID);
+bool GetNotationCount(TDatabase *Database, int CharacterID, int *Result);
+bool InsertNotation(TDatabase *Database, int CharacterID, int IPAddress,
+		int GamemasterID, const char *Reason, const char *Comment);
+bool IsIPBanished(TDatabase *Database, int IPAddress, bool *Result);
+bool InsertIPBanishment(TDatabase *Database, int CharacterID, int IPAddress,
+		int GamemasterID, const char *Reason, const char *Comment, int Duration);
+bool IsStatementReported(TDatabase *Database, int WorldID, TStatement *Statement, bool *Result);
+bool InsertStatements(TDatabase *Database, int WorldID, int NumStatements, TStatement *Statements);
+bool InsertReportedStatement(TDatabase *Database, int WorldID, TStatement *Statement,
+		int BanishmentID, int ReporterID, const char *Reason, const char *Comment);
+
+// NOTE(fusion): Info tables.
+bool GetKillStatistics(TDatabase *Database, int WorldID, DynamicArray<TKillStatistics> *Stats);
+bool MergeKillStatistics(TDatabase *Database, int WorldID, int NumStats, TKillStatistics *Stats);
+bool GetOnlineCharacters(TDatabase *Database, int WorldID, DynamicArray<TOnlineCharacter> *Characters);
+bool DeleteOnlineCharacters(TDatabase *Database, int WorldID);
+bool InsertOnlineCharacters(TDatabase *Database, int WorldID,
+		int NumCharacters, TOnlineCharacter *Characters);
+bool CheckOnlineRecord(TDatabase *Database, int WorldID, int NumCharacters, bool *NewRecord);
 
 // query.cc
 //==============================================================================
@@ -930,6 +922,16 @@ struct TQuery{
 	TWriteBuffer Response;
 };
 
+const char *QueryName(int QueryType);
+
+TQuery *QueryNew(void);
+void QueryDone(TQuery *Query);
+int QueryRefCount(TQuery *Query);
+void QueryEnqueue(TQuery *Query);
+TQuery *QueryDequeue(AtomicInt *Stop);
+bool InitQuery(void);
+void ExitQuery(void);
+
 TWriteBuffer QueryBeginRequest(TQuery *Query, int QueryType);
 bool QueryFinishRequest(TQuery *Query, TWriteBuffer WriteBuffer);
 bool QueryInternalResolveWorld(TQuery *Query, const char *World);
@@ -940,13 +942,47 @@ void QueryOk(TQuery *Query);
 void QueryError(TQuery *Query, int ErrorCode);
 void QueryFailed(TQuery *Query);
 
-TQuery *QueryNew(void);
-void QueryDone(TQuery *Query);
-int QueryRefCount(TQuery *Query);
-void QueryEnqueue(TQuery *Query);
-TQuery *QueryDequeue(AtomicInt *Stop);
-bool InitQuery(void);
-void ExitQuery(void);
+bool ProcessInternalResolveWorld(TDatabase *Database, TQuery *Query);
+bool ProcessCheckAccountPassword(TDatabase *Database, TQuery *Query);
+bool ProcessLoginAccount(TDatabase *Database, TQuery *Query);
+bool ProcessLoginAdmin(TDatabase *Database, TQuery *Query);
+bool ProcessLoginGame(TDatabase *Database, TQuery *Query);
+bool ProcessLogoutGame(TDatabase *Database, TQuery *Query);
+bool ProcessSetNamelock(TDatabase *Database, TQuery *Query);
+bool ProcessBanishAccount(TDatabase *Database, TQuery *Query);
+bool ProcessSetNotation(TDatabase *Database, TQuery *Query);
+bool ProcessReportStatement(TDatabase *Database, TQuery *Query);
+bool ProcessBanishIpAddress(TDatabase *Database, TQuery *Query);
+bool ProcessLogCharacterDeath(TDatabase *Database, TQuery *Query);
+bool ProcessAddBuddy(TDatabase *Database, TQuery *Query);
+bool ProcessRemoveBuddy(TDatabase *Database, TQuery *Query);
+bool ProcessDecrementIsOnline(TDatabase *Database, TQuery *Query);
+bool ProcessFinishAuctions(TDatabase *Database, TQuery *Query);
+bool ProcessTransferHouses(TDatabase *Database, TQuery *Query);
+bool ProcessEvictFreeAccounts(TDatabase *Database, TQuery *Query);
+bool ProcessEvictDeletedCharacters(TDatabase *Database, TQuery *Query);
+bool ProcessEvictExGuildleaders(TDatabase *Database, TQuery *Query);
+bool ProcessInsertHouseOwner(TDatabase *Database, TQuery *Query);
+bool ProcessUpdateHouseOwner(TDatabase *Database, TQuery *Query);
+bool ProcessDeleteHouseOwner(TDatabase *Database, TQuery *Query);
+bool ProcessGetHouseOwners(TDatabase *Database, TQuery *Query);
+bool ProcessGetAuctions(TDatabase *Database, TQuery *Query);
+bool ProcessStartAuction(TDatabase *Database, TQuery *Query);
+bool ProcessInsertHouses(TDatabase *Database, TQuery *Query);
+bool ProcessClearIsOnline(TDatabase *Database, TQuery *Query);
+bool ProcessCreatePlayerlist(TDatabase *Database, TQuery *Query);
+bool ProcessLogKilledCreatures(TDatabase *Database, TQuery *Query);
+bool ProcessLoadPlayers(TDatabase *Database, TQuery *Query);
+bool ProcessExcludeFromAuctions(TDatabase *Database, TQuery *Query);
+bool ProcessCancelHouseTransfer(TDatabase *Database, TQuery *Query);
+bool ProcessLoadWorldConfig(TDatabase *Database, TQuery *Query);
+bool ProcessCreateAccount(TDatabase *Database, TQuery *Query);
+bool ProcessCreateCharacter(TDatabase *Database, TQuery *Query);
+bool ProcessGetAccountSummary(TDatabase *Database, TQuery *Query);
+bool ProcessGetCharacterProfile(TDatabase *Database, TQuery *Query);
+bool ProcessGetWorlds(TDatabase *Database, TQuery *Query);
+bool ProcessGetOnlineCharacters(TDatabase *Database, TQuery *Query);
+bool ProcessGetKillStatistics(TDatabase *Database, TQuery *Query);
 
 // connections.cc
 //==============================================================================
@@ -970,9 +1006,10 @@ struct TConnection{
 	int LastActive;
 	int RWSize;
 	int RWPosition;
+	TQuery *Query;
 	bool Authorized;
 	int ApplicationType;
-	TQuery *Query;
+	char LoginData[30];
 	char RemoteAddress[30];
 };
 
@@ -982,6 +1019,7 @@ void CloseConnection(TConnection *Connection);
 TConnection *AssignConnection(int Socket, uint32 Addr, uint16 Port);
 void ReleaseConnection(TConnection *Connection);
 void CheckConnectionInput(TConnection *Connection, int Events);
+void ProcessQuery(TConnection *Connection);
 void SendQueryResponse(TConnection *Connection);
 void SendQueryOk(TConnection *Connection);
 void SendQueryError(TConnection *Connection, int ErrorCode);

@@ -300,7 +300,9 @@ void CheckConnectionQueryRequest(TConnection *Connection){
 	int QueryType = Request.Read8();
 	if(!Connection->Authorized){
 		if(QueryType != QUERY_LOGIN){
-			LOG_ERR("Unauthorized query %d from %s", QueryType, Connection->RemoteAddress);
+			LOG_ERR("Unauthorized query (%d) %s from %s",
+					QueryType, QueryName(QueryType),
+					Connection->RemoteAddress);
 			CloseConnection(Connection);
 			return;
 		}
@@ -321,19 +323,16 @@ void CheckConnectionQueryRequest(TConnection *Connection){
 
 		// NOTE(fusion): The connection is AUTHORIZED at this point but we still
 		// need to check whether the application type is valid, and for the case
-		// of a game server, check whether the world name is valid.
+		// of a game server, whether the world is valid.
 		if(ApplicationType == APPLICATION_TYPE_GAME){
 			if(QueryInternalResolveWorld(Query, LoginData)){
-				LOG("Connection %s AUTHORIZED to game server \"%s\"",
-						Connection->RemoteAddress, LoginData);
-				Connection->Authorized = true;
 				Connection->ApplicationType = APPLICATION_TYPE_GAME;
+				StringBufCopy(Connection->LoginData, LoginData);
 				ProcessQuery(Connection);
 			}else{
 				// TODO(fusion): This should probably be a PANIC?
 				LOG_ERR("Rejecting connection %s: unable to rewrite login query..."
-						" Try increasing the query buffer size",
-						Connection->RemoteAddress);
+						" Try increasing the query buffer size", Connection->RemoteAddress);
 				SendQueryFailed(Connection);
 			}
 		}else if(ApplicationType == APPLICATION_TYPE_LOGIN){
@@ -352,7 +351,6 @@ void CheckConnectionQueryRequest(TConnection *Connection){
 			SendQueryFailed(Connection);
 		}
 	}else if(Connection->ApplicationType == APPLICATION_TYPE_GAME){
-		// minimal check to see if the query type is valid and enqueue
 		if(QueryType == QUERY_LOGIN_GAME
 				|| QueryType == QUERY_LOGOUT_GAME
 				|| QueryType == QUERY_SET_NAMELOCK
@@ -385,16 +383,18 @@ void CheckConnectionQueryRequest(TConnection *Connection){
 				|| QueryType == QUERY_LOAD_WORLD_CONFIG){
 			ProcessQuery(Connection);
 		}else{
-			LOG_ERR("Unknown GAME query %d from %s",
-					QueryType, Connection->RemoteAddress);
+			LOG_ERR("Invalid GAME query (%d) %s from %s",
+					QueryType, QueryName(QueryType),
+					Connection->RemoteAddress);
 			SendQueryFailed(Connection);
 		}
 	}else if(Connection->ApplicationType == APPLICATION_TYPE_LOGIN){
 		if(QueryType == QUERY_LOGIN_ACCOUNT){
 			ProcessQuery(Connection);
 		}else{
-			LOG_ERR("Unknown LOGIN query %d from %s",
-					QueryType, Connection->RemoteAddress);
+			LOG_ERR("Invalid LOGIN query %d (%s) from %s",
+					QueryType, QueryName(QueryType),
+					Connection->RemoteAddress);
 			SendQueryFailed(Connection);
 		}
 	}else if(Connection->ApplicationType == APPLICATION_TYPE_WEB){
@@ -408,8 +408,9 @@ void CheckConnectionQueryRequest(TConnection *Connection){
 				|| QueryType == QUERY_GET_KILL_STATISTICS){
 			ProcessQuery(Connection);
 		}else{
-			LOG_ERR("Unknown WEB query %d from %s",
-					QueryType, Connection->RemoteAddress);
+			LOG_ERR("Invalid WEB query (%d) %s from %s",
+					QueryType, QueryName(QueryType),
+					Connection->RemoteAddress);
 			SendQueryFailed(Connection);
 		}
 	}
@@ -428,14 +429,26 @@ void CheckConnectionQueryResponse(TConnection *Connection){
 
 	if(Query->QueryType == QUERY_INTERNAL_RESOLVE_WORLD){
 		if(Query->QueryStatus == QUERY_STATUS_OK){
-			ASSERT(Query->WorldID != 0);
+			ASSERT(Query->WorldID > 0);
+			LOG("Connection %s AUTHORIZED to game server \"%s\"",
+					Connection->RemoteAddress, Connection->LoginData);
+			Connection->Authorized = true;
 			SendQueryOk(Connection);
 		}else{
-			LOG_WARN("Dropping connection %s: unknown game world",
-					Connection->RemoteAddress);
+			// NOTE(fusion): The connection is automatically dropped if it
+			// hasn't been authorized by the end of the first query.
+			LOG_WARN("Rejecting connection %s: unknown game server \"%s\"",
+					Connection->RemoteAddress, Connection->LoginData);
 			SendQueryFailed(Connection);
 		}
 	}else{
+		if(Query->QueryStatus == QUERY_STATUS_FAILED){
+			LOG_WARN("Query (%d) %s from %s has FAILED",
+					Query->QueryType,
+					QueryName(Query->QueryType),
+					Connection->RemoteAddress);
+		}
+
 		SendQueryResponse(Connection);
 	}
 }
@@ -512,7 +525,7 @@ void ProcessConnections(void){
 
 		if(AssignConnection(Socket, Addr, Port) == NULL){
 			LOG_ERR("Rejecting connection %08X:%d:"
-					" reached max number of connections (%d)",
+					" max number of connections reached (%d)",
 					Addr, Port, g_Config.MaxConnections);
 			close(Socket);
 		}
