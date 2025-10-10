@@ -8,6 +8,7 @@
 #	include <fcntl.h>
 #	include <netinet/in.h>
 #	include <poll.h>
+#	include <sys/eventfd.h>
 #	include <sys/socket.h>
 #	include <unistd.h>
 #	include <time.h>
@@ -16,6 +17,7 @@
 #endif
 
 static int g_Listener = -1;
+static int g_UpdateEvent = -1;
 static TConnection *g_Connections;
 
 // Connection Handling
@@ -139,7 +141,7 @@ TConnection *AssignConnection(int Socket, uint32 Addr, uint16 Port){
 		Connection = &g_Connections[ConnectionIndex];
 		Connection->State = CONNECTION_READING;
 		Connection->Socket = Socket;
-		Connection->LastActive = g_MonotonicTimeMS;
+		Connection->LastActive = GetMonotonicUptimeMS();
 		snprintf(Connection->RemoteAddress,
 				sizeof(Connection->RemoteAddress),
 				"%d.%d.%d.%d:%d",
@@ -213,7 +215,7 @@ void CheckConnectionInput(TConnection *Connection, int Events){
 		if(Connection->RWPosition >= ReadSize){
 			if(Connection->RWSize != 0){
 				Connection->State = CONNECTION_REQUEST;
-				Connection->LastActive = g_MonotonicTimeMS;
+				Connection->LastActive = GetMonotonicUptimeMS();
 				Connection->Query->Request = TReadBuffer(Buffer, Connection->RWSize);
 				break;
 			}else if(Connection->RWPosition == 2){
@@ -252,8 +254,9 @@ void ProcessQuery(TConnection *Connection){
 
 void SendQueryResponse(TConnection *Connection){
 	ASSERT(Connection->Query != NULL);
-	if(Connection->State != CONNECTION_RESPONSE){
-		LOG_ERR("Connection %s is not in a RESPONSE state (State: %d)",
+	if(Connection->State != CONNECTION_REQUEST
+	&& Connection->State != CONNECTION_RESPONSE){
+		LOG_ERR("Connection %s is not in a REQUEST/RESPONSE state (State: %d)",
 				Connection->RemoteAddress, Connection->State);
 		CloseConnection(Connection);
 		return;
@@ -453,8 +456,16 @@ void CheckConnectionQueryResponse(TConnection *Connection){
 	}
 }
 
-
 void CheckConnectionOutput(TConnection *Connection, int Events){
+	// TODO(fusion): We're only polling `POLLOUT` when the connection is WRITING
+	// meaning that a writes will be delayed at least one cycle after a response
+	// is available. This could be solved by adding a `CanWrite` boolean to the
+	// connection struct that is set to false when `write` returns `EAGAIN`, and
+	// is used to determine whether we should poll `POLLOUT`. That said, it may
+	// not even make that big of a difference.
+	//	if(!Connection->CanWrite)   { Events |= POLLOUT; }
+	//	if((Events & POLLOUT) != 0) { Connection->CanWrite = true; }
+	//	if(errno == EAGAIN)         { Connection->CanWrite = false; }
 	if((Events & POLLOUT) == 0 || Connection->Socket == -1){
 		return;
 	}
@@ -500,7 +511,7 @@ void CheckConnection(TConnection *Connection, int Events){
 	}
 
 	if(g_Config.MaxConnectionIdleTime > 0){
-		int IdleTime = (g_MonotonicTimeMS - Connection->LastActive);
+		int IdleTime = (GetMonotonicUptimeMS() - Connection->LastActive);
 		if(IdleTime >= g_Config.MaxConnectionIdleTime){
 			LOG_WARN("Dropping connection %s due to inactivity",
 					Connection->RemoteAddress);
@@ -513,8 +524,37 @@ void CheckConnection(TConnection *Connection, int Events){
 	}
 }
 
-void ProcessConnections(void){
-	// NOTE(fusion): Accept new connections.
+void WakeConnections(void){
+	if(g_UpdateEvent != -1){
+		uint64 One = 1;
+		int Written = (int)write(g_UpdateEvent, &One, sizeof(One));
+		if(Written != sizeof(One)){
+			LOG_ERR("Failed to signal update event: (%d) %s",
+					errno, strerrordesc_np(errno));
+		}
+	}
+}
+
+static void ConsumeUpdateEvent(int Events){
+	ASSERT(g_UpdateEvent != -1);
+	if((Events & POLLIN) == 0){
+		return;
+	}
+
+	uint64 Dummy;
+	int Read = (int)read(g_UpdateEvent, &Dummy, sizeof(Dummy));
+	if(Read != sizeof(Dummy)){
+		LOG_ERR("Failed to consume update event: (%d) %s",
+				errno, strerrordesc_np(errno));
+	}
+}
+
+static void AcceptConnections(int Events){
+	ASSERT(g_Listener != -1);
+	if((Events & POLLIN) == 0){
+		return;
+	}
+
 	while(true){
 		uint32 Addr;
 		uint16 Port;
@@ -530,49 +570,87 @@ void ProcessConnections(void){
 			close(Socket);
 		}
 	}
+}
 
-	// NOTE(fusion): Gather active connections.
-	int NumConnections = 0;
-	int *ConnectionIndices = (int*)alloca(g_Config.MaxConnections * sizeof(int));
-	pollfd *ConnectionFds  = (pollfd*)alloca(g_Config.MaxConnections * sizeof(pollfd));
+void ProcessConnections(void){
+	int NumFds = 0;
+	int MaxFds = g_Config.MaxConnections + 2;
+	pollfd *Fds = (pollfd*)alloca(MaxFds * sizeof(pollfd));
+	int *ConnectionIndices = (int*)alloca(MaxFds * sizeof(int));
+
+	if(g_UpdateEvent != -1){
+		Fds[NumFds].fd = g_UpdateEvent;
+		Fds[NumFds].events = POLLIN;
+		Fds[NumFds].revents = 0;
+		ConnectionIndices[NumFds] = -1;
+		NumFds += 1;
+	}
+
+	if(g_Listener != -1){
+		Fds[NumFds].fd = g_Listener;
+		Fds[NumFds].events = POLLIN;
+		Fds[NumFds].revents = 0;
+		ConnectionIndices[NumFds] = -1;
+		NumFds += 1;
+	}
+
 	for(int i = 0; i < g_Config.MaxConnections; i += 1){
 		if(g_Connections[i].State == CONNECTION_FREE || g_Connections[i].Socket == -1){
 			continue;
 		}
 
-		ConnectionIndices[NumConnections] = i;
-		ConnectionFds[NumConnections].fd = g_Connections[i].Socket;
-		ConnectionFds[NumConnections].events = POLLIN | POLLOUT;
-		ConnectionFds[NumConnections].revents = 0;
-		NumConnections += 1;
+		Fds[NumFds].fd = g_Connections[i].Socket;
+		Fds[NumFds].events = POLLIN;
+		if(g_Connections[i].State == CONNECTION_WRITING){
+			Fds[NumFds].events |= POLLOUT;
+		}
+		Fds[NumFds].revents = 0;
+		ConnectionIndices[NumFds] = i;
+		NumFds += 1;
 	}
 
-	if(NumConnections <= 0){
-		return;
-	}
-
-	// NOTE(fusion): Poll connections.
-	int NumEvents = poll(ConnectionFds, NumConnections, 0);
+	ASSERT(NumFds > 0);
+	int NumEvents = poll(Fds, NumFds, -1);
 	if(NumEvents == -1){
-		LOG_ERR("Failed to poll connections: (%d) %s", errno, strerrordesc_np(errno));
+		if(errno != ETIMEDOUT){
+			LOG_ERR("Failed to poll connections: (%d) %s",
+					errno, strerrordesc_np(errno));
+		}
 		return;
 	}
 
 	// NOTE(fusion): Process connections.
-	for(int i = 0; i < NumConnections; i += 1){
-		TConnection *Connection = &g_Connections[ConnectionIndices[i]];
-		int Events = (int)ConnectionFds[i].revents;
-		CheckConnectionInput(Connection, Events);
-		CheckConnectionQueryRequest(Connection);
-		CheckConnectionQueryResponse(Connection);
-		CheckConnectionOutput(Connection, Events);
-		CheckConnection(Connection, Events);
+	for(int i = 0; i < NumFds; i += 1){
+		int Index = ConnectionIndices[i];
+		int Events = (int)Fds[i].revents;
+		if(Index >= 0 && Index < g_Config.MaxConnections){
+			TConnection *Connection = &g_Connections[Index];
+			CheckConnectionInput(Connection, Events);
+			CheckConnectionQueryRequest(Connection);
+			CheckConnectionQueryResponse(Connection);
+			CheckConnectionOutput(Connection, Events);
+			CheckConnection(Connection, Events);
+		}else if(Index == -1 && Fds[i].fd == g_UpdateEvent){
+			ConsumeUpdateEvent(Events);
+		}else if(Index == -1 && Fds[i].fd == g_Listener){
+			AcceptConnections(Events);
+		}else{
+			LOG_ERR("Unknown connection index %d", Index);
+		}
 	}
 }
 
 bool InitConnections(void){
+	ASSERT(g_UpdateEvent == -1);
 	ASSERT(g_Listener == -1);
 	ASSERT(g_Connections == NULL);
+
+	g_UpdateEvent = eventfd(0, EFD_NONBLOCK);
+	if(g_UpdateEvent == -1){
+		LOG_ERR("Failed to create eventfd: (%d) (%s)",
+				errno, strerrordesc_np(errno));
+		return false;
+	}
 
 	g_Listener = ListenerBind((uint16)g_Config.QueryManagerPort);
 	if(g_Listener == -1){
@@ -590,6 +668,11 @@ bool InitConnections(void){
 }
 
 void ExitConnections(void){
+	if(g_UpdateEvent != -1){
+		close(g_UpdateEvent);
+		g_UpdateEvent = -1;
+	}
+
 	if(g_Listener != -1){
 		close(g_Listener);
 		g_Listener = -1;

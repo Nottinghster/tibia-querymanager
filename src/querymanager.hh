@@ -91,7 +91,6 @@ struct TConfig{
 	bool DatabaseTLS;
 
 	// Connection Config
-	int  UpdateRate;
 	int  QueryManagerPort;
 	char QueryManagerPassword[30];
 	int  QueryWorkerThreads;
@@ -101,7 +100,6 @@ struct TConfig{
 	int  MaxConnectionIdleTime;
 };
 
-extern int     g_MonotonicTimeMS;
 extern TConfig g_Config;
 
 void LogAdd(const char *Prefix, const char *Format, ...) ATTR_PRINTF(2, 3);
@@ -110,7 +108,8 @@ void LogAddVerbose(const char *Prefix, const char *Function,
 
 struct tm GetLocalTime(time_t t);
 int64 GetClockMonotonicMS(void);
-void SleepMS(int64 DurationMS);
+int GetMonotonicUptimeMS(void);
+void SleepMS(int DurationMS);
 void CryptoRandom(uint8 *Buffer, int Count);
 int RoundSecondsToDays(int Seconds);
 
@@ -1027,6 +1026,7 @@ void CheckConnectionQueryRequest(TConnection *Connection);
 void CheckConnectionQueryResponse(TConnection *Connection);
 void CheckConnectionOutput(TConnection *Connection, int Events);
 void CheckConnection(TConnection *Connection, int Events);
+void WakeConnections(void);
 void ProcessConnections(void);
 bool InitConnections(void);
 void ExitConnections(void);

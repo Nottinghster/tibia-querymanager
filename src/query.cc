@@ -257,6 +257,7 @@ static void *WorkerThread(void *Data){
 		}
 
 		QueryDone(Query);
+		WakeConnections();
 	}
 
 	LOG("Worker#%d: DONE...", Worker->WorkerID);

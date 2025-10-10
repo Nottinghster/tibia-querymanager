@@ -9,9 +9,9 @@
 #	error "Operating system not currently supported."
 #endif
 
-int     g_ShutdownSignal  = 0;
-int     g_MonotonicTimeMS = 0;
-TConfig g_Config          = {};
+AtomicInt g_ShutdownSignal = {};
+int       g_StartTimeMS    = 0;
+TConfig   g_Config         = {};
 
 void LogAdd(const char *Prefix, const char *Format, ...){
 	char Entry[4096];
@@ -68,13 +68,17 @@ int64 GetClockMonotonicMS(void){
 	return (int64)((Counter.QuadPart * 1000) / Frequency.QuadPart);
 #else
 	struct timespec Time;
-	clock_gettime(CLOCK_MONOTONIC, &Time);
+	clock_gettime(CLOCK_MONOTONIC_COARSE, &Time);
 	return ((int64)Time.tv_sec * 1000)
 		+ ((int64)Time.tv_nsec / 1000000);
 #endif
 }
 
-void SleepMS(int64 DurationMS){
+int GetMonotonicUptimeMS(void){
+	return (int)(GetClockMonotonicMS() - g_StartTimeMS);
+}
+
+void SleepMS(int DurationMS){
 #if OS_WINDOWS
 	Sleep((DWORD)DurationMS);
 #else
@@ -386,8 +390,6 @@ bool ReadConfig(const char *FileName, TConfig *Config){
 			ReadStringBufConfig(Config->DatabaseName, Val);
 		}else if(StringEqCI(Key, "DatabaseTLS")){
 			ReadBooleanConfig(&Config->DatabaseTLS, Val);
-		}else if(StringEqCI(Key, "UpdateRate")){
-			ReadIntegerConfig(&Config->UpdateRate, Val);
 		}else if(StringEqCI(Key, "QueryManagerPort")){
 			ReadIntegerConfig(&Config->QueryManagerPort, Val);
 		}else if(StringEqCI(Key, "QueryManagerPassword")){
@@ -425,22 +427,22 @@ static bool SigHandler(int SigNr, sighandler_t Handler){
 }
 
 static void ShutdownHandler(int SigNr){
-	g_ShutdownSignal = SigNr;
+	AtomicStore(&g_ShutdownSignal, SigNr);
+	WakeConnections();
 }
 
 int main(int argc, const char **argv){
 	(void)argc;
 	(void)argv;
 
-	g_ShutdownSignal = 0;
+	AtomicStore(&g_ShutdownSignal, 0);
 	if(!SigHandler(SIGPIPE, SIG_IGN)
 	|| !SigHandler(SIGINT, ShutdownHandler)
 	|| !SigHandler(SIGTERM, ShutdownHandler)){
 		return EXIT_FAILURE;
 	}
 
-	int64 StartTime = GetClockMonotonicMS();
-	g_MonotonicTimeMS = 0;
+	g_StartTimeMS = GetClockMonotonicMS();
 
 	// HostCache Config
 	g_Config.MaxCachedHostNames      = 100;
@@ -457,7 +459,6 @@ int main(int argc, const char **argv){
 	g_Config.DatabaseTLS             = true;
 
 	// Connection Config
-	g_Config.UpdateRate              = 20;
 	g_Config.QueryManagerPort        = 7174;
 	StringBufCopy(g_Config.QueryManagerPassword, "");
 	g_Config.QueryWorkerThreads      = 1;
@@ -488,7 +489,6 @@ int main(int argc, const char **argv){
 	LOG("Max connections:          %d",     g_Config.MaxConnections);
 	LOG("Max connection idle time: %dms",   g_Config.MaxConnectionIdleTime);
 
-
 	if(!CheckSHA256()){
 		return EXIT_FAILURE;
 	}
@@ -502,21 +502,16 @@ int main(int argc, const char **argv){
 		return EXIT_FAILURE;
 	}
 
-	LOG("Running at %d updates per second...", g_Config.UpdateRate);
-	int64 UpdateInterval = 1000 / (int64)g_Config.UpdateRate;
-	while(g_ShutdownSignal == 0){
-		int64 UpdateStart = GetClockMonotonicMS();
-		g_MonotonicTimeMS = (int)(UpdateStart - StartTime);
+	LOG("Running...");
+	while(AtomicLoad(&g_ShutdownSignal) == 0){
+		// NOTE(fusion): `ProcessConnections` will do a blocking `poll` which
+		// prevents this from being a hot loop, while still being reactive.
 		ProcessConnections();
-		int64 UpdateEnd = GetClockMonotonicMS();
-		int64 NextUpdate = UpdateStart + UpdateInterval;
-		if(NextUpdate > UpdateEnd){
-			SleepMS(NextUpdate - UpdateEnd);
-		}
 	}
 
+	int ShutdownSignal = AtomicLoad(&g_ShutdownSignal);
 	LOG("Received signal %d (%s), shutting down...",
-			g_ShutdownSignal, sigdescr_np(g_ShutdownSignal));
+			ShutdownSignal, sigdescr_np(ShutdownSignal));
 
 	return EXIT_SUCCESS;
 }

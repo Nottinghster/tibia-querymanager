@@ -62,10 +62,11 @@ bool ResolveHostName(const char *HostName, int *OutAddr){
 	THostCacheEntry *Entry = NULL;
 	int LeastRecentlyUsedIndex = 0;
 	int LeastRecentlyUsedTime = g_CachedHostNames[0].ResolveTime;
+	int TimeNow = GetMonotonicUptimeMS();
 	for(int i = 0; i < g_Config.MaxCachedHostNames; i += 1){
 		THostCacheEntry *Current = &g_CachedHostNames[i];
 
-		if((g_MonotonicTimeMS - Current->ResolveTime) >= g_Config.HostNameExpireTime){
+		if((TimeNow - Current->ResolveTime) >= g_Config.HostNameExpireTime){
 			memset(Current, 0, sizeof(THostCacheEntry));
 		}
 
@@ -89,7 +90,7 @@ bool ResolveHostName(const char *HostName, int *OutAddr){
 					(int)strlen(HostName), (int)sizeof(Entry->HostName));
 		}
 		Entry->Resolved = DoResolveHostName(HostName, &Entry->IPAddress);
-		Entry->ResolveTime = g_MonotonicTimeMS;
+		Entry->ResolveTime = TimeNow;
 	}
 
 	if(Entry && Entry->Resolved){

@@ -90,7 +90,7 @@ static sqlite3_stmt *PrepareQuery(TDatabase *Database, const char *Text){
 			ASSERT(EntryText != NULL);
 			if(strcmp(EntryText, Text) == 0){
 				Stmt = Entry->Stmt;
-				Entry->LastUsed = g_MonotonicTimeMS;
+				Entry->LastUsed = GetMonotonicUptimeMS();
 				break;
 			}
 		}
@@ -109,7 +109,7 @@ static sqlite3_stmt *PrepareQuery(TDatabase *Database, const char *Text){
 		}
 
 		Entry->Stmt = Stmt;
-		Entry->LastUsed = g_MonotonicTimeMS;
+		Entry->LastUsed = GetMonotonicUptimeMS();
 		Entry->Hash = Hash;
 	}else{
 		if(sqlite3_stmt_busy(Stmt) != 0){
