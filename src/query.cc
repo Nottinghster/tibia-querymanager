@@ -32,7 +32,7 @@ static TQueryQueue *g_QueryQueue;
 // Query Name
 //==============================================================================
 const char *QueryName(int QueryType){
-	const char *Name = "UNKNOWN";
+	const char *Name = "";
 	switch(QueryType){
 		case QUERY_LOGIN:                    Name = "LOGIN"; break;
 		case QUERY_INTERNAL_RESOLVE_WORLD:   Name = "INTERNAL_RESOLVE_WORLD"; break;
@@ -185,13 +185,12 @@ static void *WorkerThread(void *Data){
 	LOG("Worker#%d: ACTIVE...", Worker->WorkerID);
 	AtomicStore(&Worker->Status, WORKER_STATUS_ACTIVE);
 	while(TQuery *Query = QueryDequeue(&Worker->Stop)){
-		bool (*ProcessQuery)(TDatabase*, TQuery*) = NULL;
+		void (*ProcessQuery)(TDatabase*, TQuery*) = NULL;
 		Query->QueryType = Query->Request.Read8();
 		switch(Query->QueryType){
 			case QUERY_INTERNAL_RESOLVE_WORLD:		ProcessQuery = ProcessInternalResolveWorld; break;
-/*			case QUERY_CHECK_ACCOUNT_PASSWORD:		ProcessQuery = ProcessCheckAccountPassword; break;
+			case QUERY_CHECK_ACCOUNT_PASSWORD:		ProcessQuery = ProcessCheckAccountPassword; break;
 			case QUERY_LOGIN_ACCOUNT:				ProcessQuery = ProcessLoginAccount; break;
-			case QUERY_LOGIN_ADMIN:					ProcessQuery = ProcessLoginAdmin; break;
 			case QUERY_LOGIN_GAME:					ProcessQuery = ProcessLoginGame; break;
 			case QUERY_LOGOUT_GAME:					ProcessQuery = ProcessLogoutGame; break;
 			case QUERY_SET_NAMELOCK:				ProcessQuery = ProcessSetNamelock; break;
@@ -229,17 +228,20 @@ static void *WorkerThread(void *Data){
 			case QUERY_GET_WORLDS:					ProcessQuery = ProcessGetWorlds; break;
 			case QUERY_GET_ONLINE_CHARACTERS:		ProcessQuery = ProcessGetOnlineCharacters; break;
 			case QUERY_GET_KILL_STATISTICS:			ProcessQuery = ProcessGetKillStatistics; break;
-*/
 		}
 
+		Query->QueryStatus = QUERY_STATUS_PENDING;
 		if(ProcessQuery != NULL && DatabaseCheckpoint(Database)){
 			// NOTE(fusion): A minimum of 1 attempt is ASSUMED.
 			int Attempts = g_Config.QueryMaxAttempts;
-			while(!ProcessQuery(Database, Query)){
-				if(Attempts <= 0 || !DatabaseCheckpoint(Database)){
-					QueryFailed(Query);
+			while(true){
+				ProcessQuery(Database, Query);
+				if(Query->QueryStatus != QUERY_STATUS_PENDING
+						|| Attempts <= 0
+						|| !DatabaseCheckpoint(Database)){
 					break;
 				}
+
 				Attempts -= 1;
 
 				// NOTE(fusion): This one is important because we want to know
@@ -248,7 +250,9 @@ static void *WorkerThread(void *Data){
 				LOG_WARN("Worker#%d: Query %s failed, retrying...",
 						Worker->WorkerID, QueryName(Query->QueryType));
 			}
-		}else{
+		}
+
+		if(Query->QueryStatus == QUERY_STATUS_PENDING){
 			QueryFailed(Query);
 		}
 
@@ -398,6 +402,7 @@ bool QueryInternalResolveWorld(TQuery *Query, const char *World){
 // Query Response
 //==============================================================================
 TWriteBuffer *QueryBeginResponse(TQuery *Query, int Status){
+	ASSERT(Status != QUERY_STATUS_PENDING);
 	Query->QueryStatus = Status;
 	Query->Response = TWriteBuffer(Query->Buffer, Query->BufferSize);
 	Query->Response.Write16(0);
@@ -439,130 +444,9 @@ void QueryFailed(TQuery *Query){
 	QueryFinishResponse(Query);
 }
 
-// Query Processing
+// Query Helpers
 //==============================================================================
-// IMPORTANT(fusion): Query functions will return TRUE when they executed normally,
-// and FALSE when they were interrupted by some unexpected error such as a database
-// failure. The query response should only be written at the very end, when we know
-// it has SUCCEEDED, so that request data is kept intact (because they share the
-// query buffer) if the caller decides to retry the operation.
-
-// NOTE(fusion): These should be used with query functions to reduce clutter.
-#define QUERY_STOP_IF(Cond)					\
-	do{										\
-		if(Cond){							\
-			return false;					\
-		}									\
-	}while(0)
-
-#define QUERY_ERROR_IF(Cond, ErrorCode)		\
-	do{										\
-		if(Cond){							\
-			QueryError(Query, ErrorCode);	\
-			return true;					\
-		}									\
-	}while(0)
-
-#define QUERY_FAIL_IF(Cond) 				\
-	do{										\
-		if(Cond){							\
-			QueryFailed(Query);				\
-			return true;					\
-		}									\
-	}while(0)
-
-bool ProcessInternalResolveWorld(TDatabase *Database, TQuery *Query){
-	char World[30];
-	TReadBuffer Request = Query->Request;
-	Request.ReadString(World, sizeof(World));
-
-	int WorldID;
-	QUERY_STOP_IF(!GetWorldID(Database, World, &WorldID));
-	QUERY_FAIL_IF(WorldID <= 0);
-
-	Query->WorldID = WorldID;
-	QueryOk(Query);
-	return true;
-}
-
-bool ProcessCheckAccountPassword(TDatabase *Database, TQuery *Query);
-bool ProcessLoginAccount(TDatabase *Database, TQuery *Query);
-bool ProcessLoginAdmin(TDatabase *Database, TQuery *Query);
-bool ProcessLoginGame(TDatabase *Database, TQuery *Query);
-bool ProcessLogoutGame(TDatabase *Database, TQuery *Query);
-bool ProcessSetNamelock(TDatabase *Database, TQuery *Query);
-bool ProcessBanishAccount(TDatabase *Database, TQuery *Query);
-bool ProcessSetNotation(TDatabase *Database, TQuery *Query);
-bool ProcessReportStatement(TDatabase *Database, TQuery *Query);
-bool ProcessBanishIpAddress(TDatabase *Database, TQuery *Query);
-bool ProcessLogCharacterDeath(TDatabase *Database, TQuery *Query);
-bool ProcessAddBuddy(TDatabase *Database, TQuery *Query);
-bool ProcessRemoveBuddy(TDatabase *Database, TQuery *Query);
-bool ProcessDecrementIsOnline(TDatabase *Database, TQuery *Query);
-bool ProcessFinishAuctions(TDatabase *Database, TQuery *Query);
-bool ProcessTransferHouses(TDatabase *Database, TQuery *Query);
-bool ProcessEvictFreeAccounts(TDatabase *Database, TQuery *Query);
-bool ProcessEvictDeletedCharacters(TDatabase *Database, TQuery *Query);
-bool ProcessEvictExGuildleaders(TDatabase *Database, TQuery *Query);
-bool ProcessInsertHouseOwner(TDatabase *Database, TQuery *Query);
-bool ProcessUpdateHouseOwner(TDatabase *Database, TQuery *Query);
-bool ProcessDeleteHouseOwner(TDatabase *Database, TQuery *Query);
-bool ProcessGetHouseOwners(TDatabase *Database, TQuery *Query);
-bool ProcessGetAuctions(TDatabase *Database, TQuery *Query);
-bool ProcessStartAuction(TDatabase *Database, TQuery *Query);
-bool ProcessInsertHouses(TDatabase *Database, TQuery *Query);
-bool ProcessClearIsOnline(TDatabase *Database, TQuery *Query);
-bool ProcessCreatePlayerlist(TDatabase *Database, TQuery *Query);
-bool ProcessLogKilledCreatures(TDatabase *Database, TQuery *Query);
-bool ProcessLoadPlayers(TDatabase *Database, TQuery *Query);
-bool ProcessExcludeFromAuctions(TDatabase *Database, TQuery *Query);
-bool ProcessCancelHouseTransfer(TDatabase *Database, TQuery *Query);
-bool ProcessLoadWorldConfig(TDatabase *Database, TQuery *Query);
-bool ProcessCreateAccount(TDatabase *Database, TQuery *Query);
-bool ProcessCreateCharacter(TDatabase *Database, TQuery *Query);
-bool ProcessGetAccountSummary(TDatabase *Database, TQuery *Query);
-bool ProcessGetCharacterProfile(TDatabase *Database, TQuery *Query);
-bool ProcessGetWorlds(TDatabase *Database, TQuery *Query);
-bool ProcessGetOnlineCharacters(TDatabase *Database, TQuery *Query);
-bool ProcessGetKillStatistics(TDatabase *Database, TQuery *Query);
-
-
-// TODO(fusion): These are the old query processing functions. The new ones will
-// be very similar, except that we want a way to tell whether there was a database
-// failure, such as a connection reset, so we can automatically retry them up to
-// a certain amount of times before failing.
-//		bool ProcessX(Database, Query){
-//			//   Execute database queries, returning false on failure. The
-//			// response should only be written at the very end when we know
-//			// the query SUCCEEDED, to keep the request data intact if a retry
-//			// is needed (because they share the query buffer).
-//		}
-//
-//		...
-//
-//		void DatabaseCheckpoint(Database){
-//			//   Check whether there was a database error or if the database is
-//			// still connected and make sure it is ready for processing a query.
-//		}
-//
-//		...
-//
-//		int NumAttempts = MaxAttempts;
-//		DatabaseCheckpoint(Database);
-//		while(!ProcessX(Database, Query)){
-//			if(Attempts <= 0){
-//				QueryFailed(Query);
-//				break;
-//			}
-//			DatabaseCheckpoint(Database);
-//			NumAttempts -= 1;
-//		}
-
-
-#if 0
-// Connection Queries
-//==============================================================================
-void CompoundBanishment(TBanishmentStatus Status, int *Days, bool *FinalWarning){
+static void CompoundBanishment(TBanishmentStatus Status, int *Days, bool *FinalWarning){
 	// TODO(fusion): We might want to add all these constants as config values.
 	ASSERT(Days != NULL && FinalWarning != NULL);
 	if(Status.FinalWarning){
@@ -578,666 +462,480 @@ void CompoundBanishment(TBanishmentStatus Status, int *Days, bool *FinalWarning)
 	}
 }
 
+// Query Processing
+//==============================================================================
+// IMPORTANT(fusion): Query processing functions are expected to signal their status
+// by updating `Query->QueryStatus`. A query that is still `PENDING` at the end of
+// processing is considered unfinished and may be retried.
+//  The query response should only be written at the very end, when we know it has
+// SUCCEEDED, so that request data is kept intact (because they share the same query
+// buffer) if the caller decides to retry it.
+//  Since using `QueryBeginResponse` automatically sets `Query->QueryStatus`, it
+// should be unlikely that the request data is modified while keeping a `PENDING`
+// status.
 
-void ProcessLoginQuery(TConnection *Connection, TReadBuffer *Buffer){
-	char Password[30];
-	char LoginData[30];
-	int ApplicationType = Buffer->Read8();
-	Buffer->ReadString(Password, sizeof(Password));
-	if(ApplicationType == APPLICATION_TYPE_GAME){
-		Buffer->ReadString(LoginData, sizeof(LoginData));
-	}
+// NOTE(fusion): These should be used with query functions to reduce clutter.
+#define QUERY_STOP_IF(Cond)								\
+	do{													\
+		if(Cond){										\
+			Query->QueryStatus = QUERY_STATUS_PENDING;	\
+			return;										\
+		}												\
+	}while(0)
 
-	// TODO(fusion): Probably just disconnect on failed login attempt? Implement
-	// write then disconnect?
-	if(!StringEq(g_QueryManagerPassword, Password)){
-		LOG_WARN("Invalid login attempt from %s", Connection->RemoteAddress);
-		SendQueryStatusFailed(Connection);
-		return;
-	}
+#define QUERY_ERROR_IF(Cond, ErrorCode)					\
+	do{													\
+		if(Cond){										\
+			QueryError(Query, ErrorCode);				\
+			return;										\
+		}												\
+	}while(0)
 
-	int WorldID = 0;
-	if(ApplicationType == APPLICATION_TYPE_GAME){
-		WorldID = GetWorldID(LoginData);
-		if(WorldID == 0){
-			LOG_WARN("Rejecting connection %s from unknown game server \"%s\"",
-					Connection->RemoteAddress, LoginData);
-			SendQueryStatusFailed(Connection);
-			return;
-		}
-		LOG("Connection %s AUTHORIZED to game server \"%s\" (%d)",
-				Connection->RemoteAddress, LoginData, WorldID);
-	}else if(ApplicationType == APPLICATION_TYPE_LOGIN){
-		LOG("Connection %s AUTHORIZED to login server", Connection->RemoteAddress);
-	}else if(ApplicationType == APPLICATION_TYPE_WEB){
-		LOG("Connection %s AUTHORIZED to web server", Connection->RemoteAddress);
-	}else{
-		LOG_WARN("Rejecting connection %s from unknown application type %d",
-				Connection->RemoteAddress, ApplicationType);
-		SendQueryStatusFailed(Connection);
-		return;
-	}
+#define QUERY_FAIL_IF(Cond) 							\
+	do{													\
+		if(Cond){										\
+			QueryFailed(Query);							\
+			return;										\
+		}												\
+	}while(0)
 
-	Connection->Authorized = true;
-	Connection->ApplicationType = ApplicationType;
-	Connection->WorldID = WorldID;
-	SendQueryStatusOk(Connection);
+void ProcessInternalResolveWorld(TDatabase *Database, TQuery *Query){
+	TReadBuffer Request = Query->Request;
+
+	char World[30];
+	Request.ReadString(World, sizeof(World));
+
+	int WorldID;
+	QUERY_STOP_IF(!GetWorldID(Database, World, &WorldID));
+	QUERY_FAIL_IF(WorldID <= 0);
+
+	Query->WorldID = WorldID;
+	QueryOk(Query);
 }
 
-static int CheckAccountPasswordTransaction(int AccountID, const char *Password, int IPAddress){
+static void CheckAccountPasswordTx(TDatabase *Database, TQuery *Query,
+		int AccountID, const char *Password, int IPAddress){
 	TransactionScope Tx("CheckAccountPassword");
-	if(!Tx.Begin()){
-		return -1;
-	}
+	QUERY_STOP_IF(!Tx.Begin(Database));
 
 	TAccount Account;
-	if(!GetAccountData(AccountID, &Account)){
-		return -1;
-	}
+	QUERY_STOP_IF(!GetAccountData(Database, AccountID, &Account));
+	QUERY_ERROR_IF(Account.AccountID == 0, 1);
+	QUERY_ERROR_IF(!TestPassword(Account.Auth, sizeof(Account.Auth), Password), 2);
 
-	if(Account.AccountID == 0){
-		return 1;
-	}
+	int FailedLoginAttempts;
+	QUERY_STOP_IF(!GetAccountFailedLoginAttempts(Database, Account.AccountID, 5 * 60, &FailedLoginAttempts));
+	QUERY_ERROR_IF(FailedLoginAttempts > 10, 3);
+	QUERY_STOP_IF(!GetIPAddressFailedLoginAttempts(Database, IPAddress, 30 * 60, &FailedLoginAttempts));
+	QUERY_ERROR_IF(FailedLoginAttempts > 20, 4);
 
-	if(!TestPassword(Account.Auth, sizeof(Account.Auth), Password)){
-		return 2;
-	}
-
-	if(GetAccountFailedLoginAttempts(Account.AccountID, 5 * 60) > 10){
-		return 3;
-	}
-
-	if(GetIPAddressFailedLoginAttempts(IPAddress, 30 * 60) > 20){
-		return 4;
-	}
-
-	if(!Tx.Commit()){
-		return -1;
-	}
-
-	return 0;
+	QUERY_STOP_IF(!Tx.Commit());
+	QueryOk(Query);
 }
 
-void ProcessCheckAccountPasswordQuery(TConnection *Connection, TReadBuffer *Buffer){
+void ProcessCheckAccountPassword(TDatabase *Database, TQuery *Query){
+	TReadBuffer Request = Query->Request;
+
 	char Password[30];
 	char IPString[16];
-	int AccountID = (int)Buffer->Read32();
-	Buffer->ReadString(Password, sizeof(Password));
-	Buffer->ReadString(IPString, sizeof(IPString));
+	int AccountID = (int)Request.Read32();
+	Request.ReadString(Password, sizeof(Password));
+	Request.ReadString(IPString, sizeof(IPString));
 
 	int IPAddress = 0;
-	if(!ParseIPAddress(IPString, &IPAddress)){
-		SendQueryStatusFailed(Connection);
-		return;
-	}
+	QUERY_FAIL_IF(!ParseIPAddress(IPString, &IPAddress));
 
-	// NOTE(fusion): Similar to `ProcessLoginAccountQuery`.
-	int Result = CheckAccountPasswordTransaction(AccountID, Password, IPAddress);
-	InsertLoginAttempt(AccountID, IPAddress, (Result != 0));
-	if(Result == -1){
-		SendQueryStatusFailed(Connection);
-	}else if(Result != 0){
-		SendQueryStatusError(Connection, Result);
-	}else{
-		SendQueryStatusOk(Connection);
+	// NOTE(fusion): Same as `ProcessLoginGame`.
+	CheckAccountPasswordTx(Database, Query, AccountID, Password, IPAddress);
+	if(Query->QueryStatus != QUERY_STATUS_PENDING){
+		InsertLoginAttempt(Database, AccountID, IPAddress,
+				(Query->QueryStatus != QUERY_STATUS_OK));
 	}
 }
 
-int LoginAccountTransaction(int AccountID, const char *Password, int IPAddress,
-		DynamicArray<TCharacterEndpoint> *Characters, int *PremiumDays){
+static void LoginAccountTx(TDatabase *Database, TQuery *Query,
+		int AccountID, const char *Password, int IPAddress){
 	TransactionScope Tx("LoginAccount");
-	if(!Tx.Begin()){
-		return -1;
-	}
+	QUERY_STOP_IF(!Tx.Begin(Database));
 
 	TAccount Account;
-	if(!GetAccountData(AccountID, &Account)){
-		return -1;
-	}
+	QUERY_STOP_IF(!GetAccountData(Database, AccountID, &Account));
+	QUERY_ERROR_IF(Account.AccountID == 0, 1);
+	QUERY_ERROR_IF(!TestPassword(Account.Auth, sizeof(Account.Auth), Password), 2);
 
-	if(Account.AccountID == 0){
-		return 1;
-	}
+	int FailedLoginAttempts;
+	QUERY_STOP_IF(!GetAccountFailedLoginAttempts(Database, Account.AccountID, 5 * 60, &FailedLoginAttempts));
+	QUERY_ERROR_IF(FailedLoginAttempts > 10, 3);
+	QUERY_STOP_IF(!GetIPAddressFailedLoginAttempts(Database, IPAddress, 30 * 60, &FailedLoginAttempts));
+	QUERY_ERROR_IF(FailedLoginAttempts > 20, 4);
 
-	if(!TestPassword(Account.Auth, sizeof(Account.Auth), Password)){
-		return 2;
-	}
+	bool IsBanished;
+	QUERY_STOP_IF(!IsAccountBanished(Database, Account.AccountID, &IsBanished));
+	QUERY_ERROR_IF(IsBanished, 5);
+	QUERY_STOP_IF(!IsIPBanished(Database, IPAddress, &IsBanished));
+	QUERY_ERROR_IF(IsBanished, 6);
 
-	if(GetAccountFailedLoginAttempts(Account.AccountID, 5 * 60) > 10){
-		return 3;
-	}
+	DynamicArray<TCharacterEndpoint> Characters;
+	QUERY_STOP_IF(!GetCharacterEndpoints(Database, Account.AccountID, &Characters));
+	QUERY_STOP_IF(!Tx.Commit());
 
-	if(GetIPAddressFailedLoginAttempts(IPAddress, 30 * 60) > 20){
-		return 4;
+	TWriteBuffer *Response = QueryBeginResponse(Query, QUERY_STATUS_OK);
+	int NumCharacters = std::min<int>(Characters.Length(), UINT8_MAX);
+	Response->Write8((uint8)NumCharacters);
+	for(int i = 0; i < NumCharacters; i += 1){
+		Response->WriteString(Characters[i].Name);
+		Response->WriteString(Characters[i].WorldName);
+		Response->Write32BE((uint32)Characters[i].WorldAddress);
+		Response->Write16((uint16)Characters[i].WorldPort);
 	}
-
-	if(IsAccountBanished(Account.AccountID)){
-		return 5;
-	}
-
-	if(IsIPBanished(IPAddress)){
-		return 6;
-	}
-
-	if(!GetCharacterEndpoints(Account.AccountID, Characters)){
-		return -1;
-	}
-
-	if(!Tx.Commit()){
-		return -1;
-	}
-
-	*PremiumDays = Account.PremiumDays + Account.PendingPremiumDays;
-	return 0;
+	Response->Write16((uint16)(Account.PremiumDays + Account.PendingPremiumDays));
+	QueryFinishResponse(Query);
 }
 
-void ProcessLoginAccountQuery(TConnection *Connection, TReadBuffer *Buffer){
+void ProcessLoginAccount(TDatabase *Database, TQuery *Query){
+	TReadBuffer Request = Query->Request;
+
 	char Password[30];
 	char IPString[16];
-	int AccountID = (int)Buffer->Read32();
-	Buffer->ReadString(Password, sizeof(Password));
-	Buffer->ReadString(IPString, sizeof(IPString));
+	int AccountID = (int)Request.Read32();
+	Request.ReadString(Password, sizeof(Password));
+	Request.ReadString(IPString, sizeof(IPString));
 
 	int IPAddress = 0;
-	if(!ParseIPAddress(IPString, &IPAddress)){
-		SendQueryStatusFailed(Connection);
-		return;
+	QUERY_FAIL_IF(!ParseIPAddress(IPString, &IPAddress));
+
+	// NOTE(fusion): Same as `ProcessLoginGame`.
+	LoginAccountTx(Database, Query, AccountID, Password, IPAddress);
+	if(Query->QueryStatus != QUERY_STATUS_PENDING){
+		InsertLoginAttempt(Database, AccountID, IPAddress,
+				(Query->QueryStatus != QUERY_STATUS_OK));
 	}
-
-	int PremiumDays = 0;
-	DynamicArray<TCharacterEndpoint> Characters;
-	int Result = LoginAccountTransaction(AccountID, Password,
-			IPAddress, &Characters, &PremiumDays);
-
-	// NOTE(fusion): Similar to `ProcessLoginGameQuery` except we don't modify
-	// any tables inside the login transaction.
-	// TODO(fusion): Maybe have different login attempt tables or types?
-	InsertLoginAttempt(AccountID, IPAddress, (Result != 0));
-
-	if(Result == -1){
-		SendQueryStatusFailed(Connection);
-		return;
-	}
-
-	if(Result != 0){
-		SendQueryStatusError(Connection, Result);
-		return;
-	}
-
-	TWriteBuffer WriteBuffer = PrepareResponse(Connection, QUERY_STATUS_OK);
-	int NumCharacters = std::min<int>(Characters.Length(), UINT8_MAX);
-	WriteBuffer.Write8((uint8)NumCharacters);
-	for(int i = 0; i < NumCharacters; i += 1){
-		WriteBuffer.WriteString(Characters[i].Name);
-		WriteBuffer.WriteString(Characters[i].WorldName);
-		WriteBuffer.Write32BE((uint32)Characters[i].WorldAddress);
-		WriteBuffer.Write16((uint16)Characters[i].WorldPort);
-	}
-	WriteBuffer.Write16((uint16)PremiumDays);
-	SendResponse(Connection, &WriteBuffer);
 }
 
-void ProcessLoginAdminQuery(TConnection *Connection, TReadBuffer *Buffer){
-	// TODO(fusion): I thought for a second this could be the query used with
-	// the login server but it doesn't take a password or ip address for basic
-	// checks. Even if it's used in combination with `CheckAccountPassword`,
-	// it doesn't make sense to split what should have been a single query which
-	// is what the new `LoginAccount` query does.
-	SendQueryStatusFailed(Connection);
-}
-
-static int LoginGameTransaction(int WorldID, int AccountID, const char *CharacterName,
-		const char *Password, int IPAddress, bool PrivateWorld, bool GamemasterRequired,
-		TCharacterLoginData *Character, DynamicArray<TAccountBuddy> *Buddies,
-		DynamicArray<TCharacterRight> *Rights, bool *PremiumAccountActivated){
+static void LoginGameTx(TDatabase *Database, TQuery *Query,
+		int AccountID, const char *CharacterName, const char *Password,
+		int IPAddress, bool PrivateWorld, bool GamemasterRequired){
 	TransactionScope Tx("LoginGame");
-	if(!Tx.Begin()){
-		return -1;
-	}
+	QUERY_STOP_IF(!Tx.Begin(Database));
 
-	if(!GetCharacterLoginData(CharacterName, Character)){
-		return -1;
-	}
-
-	if(Character->CharacterID == 0){
-		return 1;
-	}
-
-	if(Character->Deleted){
-		return 2;
-	}
-
-	if(Character->WorldID != WorldID){
-		return 3;
-	}
-
+	TCharacterLoginData Character;
+	QUERY_STOP_IF(!GetCharacterLoginData(Database, CharacterName, &Character));
+	QUERY_ERROR_IF(Character.CharacterID == 0, 1);
+	QUERY_ERROR_IF(Character.Deleted, 2);
+	QUERY_ERROR_IF(Character.WorldID != Query->WorldID, 3);
 	if(PrivateWorld){
-		if(!GetWorldInvitation(WorldID, Character->CharacterID)){
-			return 4;
-		}
+		bool Invited;
+		QUERY_STOP_IF(!GetWorldInvitation(Database, Query->WorldID, Character.CharacterID, &Invited));
+		QUERY_ERROR_IF(!Invited, 4);
 	}
 
 	TAccount Account;
-	if(!GetAccountData(AccountID, &Account)){
-		return -1;
-	}
+	QUERY_STOP_IF(!GetAccountData(Database, AccountID, &Account));
+	// NOTE(fusion): This is correct, there is no error code 5.
+	QUERY_ERROR_IF(Account.AccountID == 0 || Account.AccountID != Character.AccountID, 15);
+	QUERY_ERROR_IF(Account.Deleted, 8);
+	QUERY_ERROR_IF(!TestPassword(Account.Auth, sizeof(Account.Auth), Password), 6);
 
-	if(Account.AccountID == 0 || Account.AccountID != Character->AccountID){
-		// NOTE(fusion): This is correct, there is no error code 5.
-		return 15;
-	}
+	int FailedLoginAttempts;
+	QUERY_STOP_IF(!GetAccountFailedLoginAttempts(Database, Account.AccountID, 5 * 60, &FailedLoginAttempts));
+	QUERY_ERROR_IF(FailedLoginAttempts > 10, 7);
+	QUERY_STOP_IF(!GetIPAddressFailedLoginAttempts(Database, IPAddress, 30 * 60, &FailedLoginAttempts));
+	QUERY_ERROR_IF(FailedLoginAttempts > 20, 9);
 
-	if(Account.Deleted){
-		return 8;
-	}
-
-	if(!TestPassword(Account.Auth, sizeof(Account.Auth), Password)){
-		return 6;
-	}
-
-	if(GetAccountFailedLoginAttempts(Account.AccountID, 5 * 60) > 10){
-		return 7;
-	}
-
-	if(GetIPAddressFailedLoginAttempts(IPAddress, 30 * 60) > 20){
-		return 9;
-	}
-
-	if(IsAccountBanished(Account.AccountID)){
-		return 10;
-	}
-
-	if(IsCharacterNamelocked(Character->CharacterID)){
-		return 11;
-	}
-
-	if(IsIPBanished(IPAddress)){
-		return 12;
-	}
+	bool IsBanished;
+	QUERY_STOP_IF(!IsAccountBanished(Database, Account.AccountID, &IsBanished));
+	QUERY_ERROR_IF(IsBanished, 10);
+	QUERY_STOP_IF(!IsCharacterNamelocked(Database, Character.CharacterID, &IsBanished));
+	QUERY_ERROR_IF(IsBanished, 11);
+	QUERY_STOP_IF(!IsIPBanished(Database, IPAddress, &IsBanished));
+	QUERY_ERROR_IF(IsBanished, 12);
 
 	// TODO(fusion): Probably merge these into a single operation?
-	if(!GetCharacterRight(Character->CharacterID, "ALLOW_MULTICLIENT")
-			&& GetAccountOnlineCharacters(Account.AccountID) > 0
-			&& !IsCharacterOnline(Character->CharacterID)){
-		return 13;
+	bool MultiClient;
+	QUERY_STOP_IF(!GetCharacterRight(Database, Character.CharacterID, "ALLOW_MULTICLIENT", &MultiClient));
+	if(!MultiClient){
+		int OnlineCharacters;
+		QUERY_STOP_IF(!GetAccountOnlineCharacters(Database, Account.AccountID, &OnlineCharacters));
+		if(OnlineCharacters > 0){
+			bool IsOnline;
+			QUERY_STOP_IF(!IsCharacterOnline(Database, Character.CharacterID, &IsOnline));
+			QUERY_ERROR_IF(!IsOnline, 13);
+		}
 	}
 
 	if(GamemasterRequired){
-		if(!GetCharacterRight(Character->CharacterID, "GAMEMASTER_OUTFIT")){
-			return 14;
-		}
+		bool GamemasterOutfit;
+		QUERY_STOP_IF(!GetCharacterRight(Database, Character.CharacterID, "GAMEMASTER_OUTFIT", &GamemasterOutfit));
+		QUERY_ERROR_IF(!GamemasterOutfit, 14);
 	}
 
-	if(!GetBuddies(WorldID, Account.AccountID, Buddies)){
-		return -1;
-	}
+	DynamicArray<TAccountBuddy> Buddies;
+	QUERY_STOP_IF(!GetBuddies(Database, Query->WorldID, Account.AccountID, &Buddies));
 
-	if(!GetCharacterRights(Character->CharacterID, Rights)){
-		return -1;
-	}
+	DynamicArray<TCharacterRight> Rights;
+	QUERY_STOP_IF(!GetCharacterRights(Database, Character.CharacterID, &Rights));
 
+	bool PremiumAccountActivated = false;
 	if(Account.PremiumDays == 0 && Account.PendingPremiumDays > 0){
-		if(!ActivatePendingPremiumDays(Account.AccountID)){
-			return -1;
-		}
-
+		QUERY_STOP_IF(!ActivatePendingPremiumDays(Database, Account.AccountID));
 		Account.PremiumDays += Account.PendingPremiumDays;
 		Account.PendingPremiumDays = 0;
-		*PremiumAccountActivated = true;
+		PremiumAccountActivated = true;
 	}
 
 	if(Account.PremiumDays > 0){
-		Rights->Push(TCharacterRight{"PREMIUM_ACCOUNT"});
+		Rights.Push(TCharacterRight{"PREMIUM_ACCOUNT"});
 	}
 
-	if(!IncrementIsOnline(WorldID, Character->CharacterID)){
-		return -1;
+	QUERY_STOP_IF(!IncrementIsOnline(Database, Query->WorldID, Character.CharacterID));
+	QUERY_STOP_IF(!Tx.Commit());
+
+	TWriteBuffer *Response = QueryBeginResponse(Query, QUERY_STATUS_OK);
+	Response->Write32((uint32)Character.CharacterID);
+	Response->WriteString(Character.Name);
+	Response->Write8((uint8)Character.Sex);
+	Response->WriteString(Character.Guild);
+	Response->WriteString(Character.Rank);
+	Response->WriteString(Character.Title);
+
+	int NumBuddies = std::min<int>(Buddies.Length(), UINT8_MAX);
+	Response->Write8((uint8)NumBuddies);
+	for(int i = 0; i < NumBuddies; i += 1){
+		Response->Write32((uint32)Buddies[i].CharacterID);
+		Response->WriteString(Buddies[i].Name);
 	}
 
-	if(!Tx.Commit()){
-		return -1;
+	int NumRights = std::min<int>(Rights.Length(), UINT8_MAX);
+	Response->Write8((uint8)NumRights);
+	for(int i = 0; i < NumRights; i += 1){
+		Response->WriteString(Rights[i].Name);
 	}
 
-	return 0;
+	Response->WriteFlag(PremiumAccountActivated);
+	QueryFinishResponse(Query);
 }
 
-void ProcessLoginGameQuery(TConnection *Connection, TReadBuffer *Buffer){
-	if(Connection->ApplicationType != APPLICATION_TYPE_GAME){
-		SendQueryStatusFailed(Connection);
-		return;
-	}
+void ProcessLoginGame(TDatabase *Database, TQuery *Query){
+	TReadBuffer Request = Query->Request;
 
 	char CharacterName[30];
 	char Password[30];
 	char IPString[16];
-	int AccountID = (int)Buffer->Read32();
-	Buffer->ReadString(CharacterName, sizeof(CharacterName));
-	Buffer->ReadString(Password, sizeof(Password));
-	Buffer->ReadString(IPString, sizeof(IPString));
-	bool PrivateWorld = Buffer->ReadFlag();
-	Buffer->ReadFlag(); // "PremiumAccountRequired" unused
-	bool GamemasterRequired = Buffer->ReadFlag();
+	int AccountID = (int)Request.Read32();
+	Request.ReadString(CharacterName, sizeof(CharacterName));
+	Request.ReadString(Password, sizeof(Password));
+	Request.ReadString(IPString, sizeof(IPString));
+	bool PrivateWorld = Request.ReadFlag();
+	Request.ReadFlag(); // "PremiumAccountRequired" unused
+	bool GamemasterRequired = Request.ReadFlag();
 
-	int IPAddress = 0;
-	if(!ParseIPAddress(IPString, &IPAddress)){
-		SendQueryStatusFailed(Connection);
-		return;
-	}
-
-	TCharacterLoginData Character;
-	DynamicArray<TAccountBuddy> Buddies;
-	DynamicArray<TCharacterRight> Rights;
-	bool PremiumAccountActivated = false;
-	int Result = LoginGameTransaction(Connection->WorldID, AccountID,
-			CharacterName, Password, IPAddress, PrivateWorld,
-			GamemasterRequired, &Character, &Buddies, &Rights,
-			&PremiumAccountActivated);
+	int IPAddress;
+	QUERY_FAIL_IF(!ParseIPAddress(IPString, &IPAddress));
 
 	// IMPORTANT(fusion): We need to insert login attempts outside the login game
 	// transaction or we could end up not having it recorded at all due to rollbacks.
 	// It is also the reason the whole transaction had to be pulled to its own function.
 	// IMPORTANT(fusion): Don't return if we fail to insert the login attempt as the
 	// result of the whole operation was already determined by the transaction function.
-	InsertLoginAttempt(AccountID, IPAddress, (Result != 0));
-
-	if(Result == -1){
-		SendQueryStatusFailed(Connection);
-		return;
+	LoginGameTx(Database, Query, AccountID, CharacterName,
+			 Password, IPAddress, PrivateWorld, GamemasterRequired);
+	if(Query->QueryStatus != QUERY_STATUS_PENDING){
+		InsertLoginAttempt(Database, AccountID, IPAddress,
+				(Query->QueryStatus != QUERY_STATUS_OK));
 	}
-
-	if(Result != 0){
-		SendQueryStatusError(Connection, Result);
-		return;
-	}
-
-	TWriteBuffer WriteBuffer = PrepareResponse(Connection, QUERY_STATUS_OK);
-	WriteBuffer.Write32((uint32)Character.CharacterID);
-	WriteBuffer.WriteString(Character.Name);
-	WriteBuffer.Write8((uint8)Character.Sex);
-	WriteBuffer.WriteString(Character.Guild);
-	WriteBuffer.WriteString(Character.Rank);
-	WriteBuffer.WriteString(Character.Title);
-
-	int NumBuddies = std::min<int>(Buddies.Length(), UINT8_MAX);
-	WriteBuffer.Write8((uint8)NumBuddies);
-	for(int i = 0; i < NumBuddies; i += 1){
-		WriteBuffer.Write32((uint32)Buddies[i].CharacterID);
-		WriteBuffer.WriteString(Buddies[i].Name);
-	}
-
-	int NumRights = std::min<int>(Rights.Length(), UINT8_MAX);
-	WriteBuffer.Write8((uint8)NumRights);
-	for(int i = 0; i < NumRights; i += 1){
-		WriteBuffer.WriteString(Rights[i].Name);
-	}
-
-	WriteBuffer.WriteFlag(PremiumAccountActivated);
-
-	SendResponse(Connection, &WriteBuffer);
 }
 
-void ProcessLogoutGameQuery(TConnection *Connection, TReadBuffer *Buffer){
-	if(Connection->ApplicationType != APPLICATION_TYPE_GAME){
-		SendQueryStatusFailed(Connection);
-		return;
-	}
+void ProcessLogoutGame(TDatabase *Database, TQuery *Query){
+	TReadBuffer Request = Query->Request;
 
 	char Profession[30];
 	char Residence[30];
-	int CharacterID = (int)Buffer->Read32();
-	int Level = Buffer->Read16();
-	Buffer->ReadString(Profession, sizeof(Profession));
-	Buffer->ReadString(Residence, sizeof(Residence));
-	int LastLoginTime = (int)Buffer->Read32();
-	int TutorActivities = Buffer->Read16();
+	int CharacterID = (int)Request.Read32();
+	int Level = Request.Read16();
+	Request.ReadString(Profession, sizeof(Profession));
+	Request.ReadString(Residence, sizeof(Residence));
+	int LastLoginTime = (int)Request.Read32();
+	int TutorActivities = Request.Read16();
 
-	if(!LogoutCharacter(Connection->WorldID, CharacterID, Level,
-			Profession, Residence, LastLoginTime, TutorActivities)){
-		SendQueryStatusFailed(Connection);
-		return;
-	}
-
-	SendQueryStatusOk(Connection);
+	QUERY_STOP_IF(!LogoutCharacter(Database, Query->WorldID, CharacterID,
+			Level, Profession, Residence, LastLoginTime, TutorActivities));
+	QueryOk(Query);
 }
 
-void ProcessSetNamelockQuery(TConnection *Connection, TReadBuffer *Buffer){
-	if(Connection->ApplicationType != APPLICATION_TYPE_GAME){
-		SendQueryStatusFailed(Connection);
-		return;
-	}
+void ProcessSetNamelock(TDatabase *Database, TQuery *Query){
+	TReadBuffer Request = Query->Request;
 
 	char CharacterName[30];
 	char IPString[16];
 	char Reason[200];
 	char Comment[200];
-	int GamemasterID = (int)Buffer->Read32();
-	Buffer->ReadString(CharacterName, sizeof(CharacterName));
-	Buffer->ReadString(IPString, sizeof(IPString));
-	Buffer->ReadString(Reason, sizeof(Reason));
-	Buffer->ReadString(Comment, sizeof(Comment));
+	int GamemasterID = (int)Request.Read32();
+	Request.ReadString(CharacterName, sizeof(CharacterName));
+	Request.ReadString(IPString, sizeof(IPString));
+	Request.ReadString(Reason, sizeof(Reason));
+	Request.ReadString(Comment, sizeof(Comment));
 
 	int IPAddress = 0;
-	if(!StringEmpty(IPString) && !ParseIPAddress(IPString, &IPAddress)){
-		SendQueryStatusFailed(Connection);
-		return;
-	}
+	QUERY_FAIL_IF(!StringEmpty(IPString) && !ParseIPAddress(IPString, &IPAddress));
 
 	TransactionScope Tx("SetNamelock");
-	if(!Tx.Begin()){
-		SendQueryStatusFailed(Connection);
-		return;
-	}
+	QUERY_STOP_IF(!Tx.Begin(Database));
 
-	int CharacterID = GetCharacterID(Connection->WorldID, CharacterName);
-	if(CharacterID == 0){
-		SendQueryStatusError(Connection, 1);
-		return;
-	}
+	int CharacterID;
+	QUERY_STOP_IF(!GetCharacterID(Database, Query->WorldID, CharacterName, &CharacterID));
+	QUERY_ERROR_IF(CharacterID == 0, 1);
 
 	// TODO(fusion): Might be `NO_BANISHMENT`.
-	if(GetCharacterRight(CharacterID, "NAMELOCK")){
-		SendQueryStatusError(Connection, 2);
-		return;
-	}
+	bool Namelock;
+	QUERY_STOP_IF(!GetCharacterRight(Database, CharacterID, "NAMELOCK", &Namelock));
+	QUERY_ERROR_IF(Namelock, 2);
 
-	TNamelockStatus Status = GetNamelockStatus(CharacterID);
-	if(Status.Namelocked){
-		SendQueryStatusError(Connection, (Status.Approved ? 4 : 3));
-		return;
-	}
+	TNamelockStatus Status;
+	QUERY_STOP_IF(!GetNamelockStatus(Database, CharacterID, &Status));
+	QUERY_ERROR_IF(Status.Namelocked, (Status.Approved ? 4 : 3));
 
-	if(!InsertNamelock(CharacterID, IPAddress, GamemasterID, Reason, Comment)){
-		SendQueryStatusFailed(Connection);
-		return;
-	}
-
-	if(!Tx.Commit()){
-		SendQueryStatusFailed(Connection);
-		return;
-	}
-
-	SendQueryStatusOk(Connection);
+	QUERY_STOP_IF(!InsertNamelock(Database, CharacterID, IPAddress, GamemasterID, Reason, Comment));
+	QUERY_STOP_IF(!Tx.Commit());
+	QueryOk(Query);
 }
 
-void ProcessBanishAccountQuery(TConnection *Connection, TReadBuffer *Buffer){
-	if(Connection->ApplicationType != APPLICATION_TYPE_GAME){
-		SendQueryStatusFailed(Connection);
-		return;
-	}
+void ProcessBanishAccount(TDatabase *Database, TQuery *Query){
+	TReadBuffer Request = Query->Request;
 
 	char CharacterName[30];
 	char IPString[16];
 	char Reason[200];
 	char Comment[200];
-	int GamemasterID = (int)Buffer->Read32();
-	Buffer->ReadString(CharacterName, sizeof(CharacterName));
-	Buffer->ReadString(IPString, sizeof(IPString));
-	Buffer->ReadString(Reason, sizeof(Reason));
-	Buffer->ReadString(Comment, sizeof(Comment));
-	bool FinalWarning = Buffer->ReadFlag();
+	int GamemasterID = (int)Request.Read32();
+	Request.ReadString(CharacterName, sizeof(CharacterName));
+	Request.ReadString(IPString, sizeof(IPString));
+	Request.ReadString(Reason, sizeof(Reason));
+	Request.ReadString(Comment, sizeof(Comment));
+	bool FinalWarning = Request.ReadFlag();
 
 	int IPAddress = 0;
-	if(!StringEmpty(IPString) && !ParseIPAddress(IPString, &IPAddress)){
-		SendQueryStatusFailed(Connection);
-		return;
-	}
+	QUERY_FAIL_IF(!StringEmpty(IPString) && !ParseIPAddress(IPString, &IPAddress));
 
 	TransactionScope Tx("BanishAccount");
-	if(!Tx.Begin()){
-		SendQueryStatusFailed(Connection);
-		return;
-	}
+	QUERY_STOP_IF(!Tx.Begin(Database));
 
-	int CharacterID = GetCharacterID(Connection->WorldID, CharacterName);
-	if(CharacterID == 0){
-		SendQueryStatusError(Connection, 1);
-		return;
-	}
+	int CharacterID;
+	QUERY_STOP_IF(!GetCharacterID(Database, Query->WorldID, CharacterName, &CharacterID));
+	QUERY_ERROR_IF(CharacterID == 0, 1);
 
 	// TODO(fusion): Might be `NO_BANISHMENT`.
-	if(GetCharacterRight(CharacterID, "BANISHMENT")){
-		SendQueryStatusError(Connection, 2);
-		return;
-	}
+	bool Banishment;
+	QUERY_STOP_IF(!GetCharacterRight(Database, CharacterID, "BANISHMENT", &Banishment));
+	QUERY_ERROR_IF(Banishment, 2);
 
-	TBanishmentStatus Status = GetBanishmentStatus(CharacterID);
-	if(Status.Banished){
-		SendQueryStatusError(Connection, 3);
-		return;
-	}
+	TBanishmentStatus Status;
+	QUERY_STOP_IF(!GetBanishmentStatus(Database, CharacterID, &Status));
+	QUERY_ERROR_IF(Status.Banished, 3);
 
-	int BanishmentID = 0;
 	int Days = 7;
+	int BanishmentID = 0;
 	CompoundBanishment(Status, &Days, &FinalWarning);
-	if(!InsertBanishment(CharacterID, IPAddress, GamemasterID,
-			Reason, Comment, FinalWarning, Days * 86400, &BanishmentID)){
-		SendQueryStatusFailed(Connection);
-		return;
-	}
+	QUERY_STOP_IF(!InsertBanishment(Database, CharacterID, IPAddress,
+			GamemasterID, Reason, Comment, FinalWarning, Days * 86400,
+			&BanishmentID));
+	QUERY_STOP_IF(!Tx.Commit());
 
-	if(!Tx.Commit()){
-		SendQueryStatusFailed(Connection);
-		return;
-	}
-
-	TWriteBuffer WriteBuffer = PrepareResponse(Connection, QUERY_STATUS_OK);
-	WriteBuffer.Write32((uint32)BanishmentID);
-	WriteBuffer.Write8(Days > 0 ? Days : 0xFF);
-	WriteBuffer.WriteFlag(FinalWarning);
-	SendResponse(Connection, &WriteBuffer);
+	TWriteBuffer *Response = QueryBeginResponse(Query, QUERY_STATUS_OK);
+	Response->Write32((uint32)BanishmentID);
+	Response->Write8(Days > 0 ? Days : 0xFF);
+	Response->WriteFlag(FinalWarning);
+	QueryFinishResponse(Query);
 }
 
-void ProcessSetNotationQuery(TConnection *Connection, TReadBuffer *Buffer){
-	if(Connection->ApplicationType != APPLICATION_TYPE_GAME){
-		SendQueryStatusFailed(Connection);
-		return;
-	}
+void ProcessSetNotation(TDatabase *Database, TQuery *Query){
+	TReadBuffer Request = Query->Request;
 
 	char CharacterName[30];
 	char IPString[16];
 	char Reason[200];
 	char Comment[200];
-	int GamemasterID = Buffer->Read32();
-	Buffer->ReadString(CharacterName, sizeof(CharacterName));
-	Buffer->ReadString(IPString, sizeof(IPString));
-	Buffer->ReadString(Reason, sizeof(Reason));
-	Buffer->ReadString(Comment, sizeof(Comment));
+	int GamemasterID = (int)Request.Read32();
+	Request.ReadString(CharacterName, sizeof(CharacterName));
+	Request.ReadString(IPString, sizeof(IPString));
+	Request.ReadString(Reason, sizeof(Reason));
+	Request.ReadString(Comment, sizeof(Comment));
 
 	int IPAddress = 0;
-	if(!StringEmpty(IPString) && !ParseIPAddress(IPString, &IPAddress)){
-		SendQueryStatusFailed(Connection);
-		return;
-	}
+	QUERY_FAIL_IF(!StringEmpty(IPString) && !ParseIPAddress(IPString, &IPAddress));
 
 	TransactionScope Tx("SetNotation");
-	if(!Tx.Begin()){
-		SendQueryStatusFailed(Connection);
-		return;
-	}
+	QUERY_STOP_IF(!Tx.Begin(Database));
 
-	int CharacterID = GetCharacterID(Connection->WorldID, CharacterName);
-	if(CharacterID == 0){
-		SendQueryStatusError(Connection, 1);
-		return;
-	}
+	int CharacterID;
+	QUERY_STOP_IF(!GetCharacterID(Database, Query->WorldID, CharacterName, &CharacterID));
+	QUERY_ERROR_IF(CharacterID == 0, 1);
 
 	// TODO(fusion): Might be `NO_BANISHMENT`.
-	if(GetCharacterRight(CharacterID, "NOTATION")){
-		SendQueryStatusError(Connection, 2);
-		return;
-	}
+	bool Notation;
+	QUERY_STOP_IF(!GetCharacterRight(Database, CharacterID, "NOTATION", &Notation));
+	QUERY_ERROR_IF(Notation, 2);
 
+	int Notations = 0;
 	int BanishmentID = 0;
-	if(GetNotationCount(CharacterID) >= 5){
+	QUERY_STOP_IF(!GetNotationCount(Database, CharacterID, &Notations));
+	if(Notations >= 5){
 		int BanishmentDays = 7;
 		bool FinalWarning = false;
-		TBanishmentStatus Status = GetBanishmentStatus(CharacterID);
+		TBanishmentStatus Status = {};
+		QUERY_STOP_IF(!GetBanishmentStatus(Database, CharacterID, &Status));
 		CompoundBanishment(Status, &BanishmentDays, &FinalWarning);
-		if(!InsertBanishment(CharacterID, IPAddress, 0, "Excessive Notations",
-				"", FinalWarning, BanishmentDays, &BanishmentID)){
-			SendQueryStatusFailed(Connection);
-			return;
-		}
+		QUERY_STOP_IF(!InsertBanishment(Database, CharacterID, IPAddress,
+				0, "Excessive Notations", "", FinalWarning, BanishmentDays,
+				&BanishmentID));
 	}
 
-	if(!InsertNotation(CharacterID, IPAddress, GamemasterID, Reason, Comment)){
-		SendQueryStatusFailed(Connection);
-		return;
-	}
+	QUERY_STOP_IF(!InsertNotation(Database, CharacterID, IPAddress, GamemasterID, Reason, Comment));
+	QUERY_STOP_IF(!Tx.Commit());
 
-	if(!Tx.Commit()){
-		SendQueryStatusFailed(Connection);
-		return;
-	}
-
-	TWriteBuffer WriteBuffer = PrepareResponse(Connection, QUERY_STATUS_OK);
-	WriteBuffer.Write32((uint32)BanishmentID);
-	SendResponse(Connection, &WriteBuffer);
+	TWriteBuffer *Response = QueryBeginResponse(Query, QUERY_STATUS_OK);
+	Response->Write32((uint32)BanishmentID);
+	QueryFinishResponse(Query);
 }
 
-void ProcessReportStatementQuery(TConnection *Connection, TReadBuffer *Buffer){
-	if(Connection->ApplicationType != APPLICATION_TYPE_GAME){
-		SendQueryStatusFailed(Connection);
-		return;
-	}
+void ProcessReportStatement(TDatabase *Database, TQuery *Query){
+	TReadBuffer Request = Query->Request;
 
 	char CharacterName[30];
 	char Reason[200];
 	char Comment[200];
-	int ReporterID = Buffer->Read32();
-	Buffer->ReadString(CharacterName, sizeof(CharacterName));
-	Buffer->ReadString(Reason, sizeof(Reason));
-	Buffer->ReadString(Comment, sizeof(Comment));
-	int BanishmentID = Buffer->Read32();
-	int StatementID = Buffer->Read32();
-	int NumStatements = Buffer->Read16();
+	int ReporterID = (int)Request.Read32();
+	Request.ReadString(CharacterName, sizeof(CharacterName));
+	Request.ReadString(Reason, sizeof(Reason));
+	Request.ReadString(Comment, sizeof(Comment));
+	int BanishmentID = (int)Request.Read32();
+	int StatementID = (int)Request.Read32();
+	int NumStatements = (int)Request.Read16();
 
 	if(StatementID == 0){
-		LOG_ERR("Missing reported statement id");
-		SendQueryStatusFailed(Connection);
+		LOG_ERR("Missing statement id");
+		QueryFailed(Query);
 		return;
 	}
 
 	if(NumStatements == 0){
-		LOG_ERR("Missing report statements");
-		SendQueryStatusFailed(Connection);
+		LOG_ERR("Missing statement context");
+		QueryFailed(Query);
 		return;
 	}
 
 	TStatement *ReportedStatement = NULL;
 	TStatement *Statements = (TStatement*)alloca(NumStatements * sizeof(TStatement));
 	for(int i = 0; i < NumStatements; i += 1){
-		Statements[i].StatementID = (int)Buffer->Read32();
-		Statements[i].Timestamp = (int)Buffer->Read32();
-		Statements[i].CharacterID = (int)Buffer->Read32();
-		Buffer->ReadString(Statements[i].Channel, sizeof(Statements[i].Channel));
-		Buffer->ReadString(Statements[i].Text, sizeof(Statements[i].Text));
+		Statements[i].StatementID = (int)Request.Read32();
+		Statements[i].Timestamp = (int)Request.Read32();
+		Statements[i].CharacterID = (int)Request.Read32();
+		Request.ReadString(Statements[i].Channel, sizeof(Statements[i].Channel));
+		Request.ReadString(Statements[i].Text, sizeof(Statements[i].Text));
 
 		if(Statements[i].StatementID == StatementID){
 			if(ReportedStatement != NULL){
 				LOG_WARN("Reported statement (%d, %d, %d) appears multiple times",
-						Connection->WorldID, Statements[i].Timestamp,
-						Statements[i].StatementID);
+						Query->WorldID, Statements[i].Timestamp, Statements[i].StatementID);
 			}
 			ReportedStatement = &Statements[i];
 		}
@@ -1245,723 +943,429 @@ void ProcessReportStatementQuery(TConnection *Connection, TReadBuffer *Buffer){
 
 	if(ReportedStatement == NULL){
 		LOG_ERR("Missing reported statement");
-		SendQueryStatusFailed(Connection);
+		QueryFailed(Query);
 		return;
 	}
 
 	TransactionScope Tx("ReportStatement");
-	if(!Tx.Begin()){
-		SendQueryStatusFailed(Connection);
-		return;
-	}
+	QUERY_STOP_IF(!Tx.Begin(Database));
 
-	int CharacterID = GetCharacterID(Connection->WorldID, CharacterName);
-	if(CharacterID == 0){
-		SendQueryStatusError(Connection, 1);
-		return;
-	}else if(ReportedStatement->CharacterID != CharacterID){
+	int CharacterID;
+	QUERY_STOP_IF(!GetCharacterID(Database, Query->WorldID, CharacterName, &CharacterID));
+	QUERY_ERROR_IF(CharacterID == 0, 1);
+
+	if(ReportedStatement->CharacterID != CharacterID){
 		LOG_ERR("Reported statement character mismatch");
-		SendQueryStatusFailed(Connection);
+		QueryFailed(Query);
 		return;
 	}
 
-	if(IsStatementReported(Connection->WorldID, ReportedStatement)){
-		SendQueryStatusError(Connection, 2);
-		return;
-	}
+	bool IsReported;
+	QUERY_STOP_IF(!IsStatementReported(Database, Query->WorldID, ReportedStatement, &IsReported));
+	QUERY_ERROR_IF(IsReported, 2);
 
-	if(!InsertStatements(Connection->WorldID, NumStatements, Statements)){
-		SendQueryStatusFailed(Connection);
-		return;
-	}
-
-	if(!InsertReportedStatement(Connection->WorldID, ReportedStatement,
-			BanishmentID, ReporterID, Reason, Comment)){
-		SendQueryStatusFailed(Connection);
-		return;
-	}
-
-	if(!Tx.Commit()){
-		SendQueryStatusFailed(Connection);
-		return;
-	}
-
-	SendQueryStatusOk(Connection);
+	QUERY_STOP_IF(!InsertStatements(Database, Query->WorldID, NumStatements, Statements));
+	QUERY_STOP_IF(!InsertReportedStatement(Database, Query->WorldID, ReportedStatement,
+											BanishmentID, ReporterID, Reason, Comment));
+	QUERY_STOP_IF(!Tx.Commit());
+	QueryOk(Query);
 }
 
-void ProcessBanishIPAddressQuery(TConnection *Connection, TReadBuffer *Buffer){
-	if(Connection->ApplicationType != APPLICATION_TYPE_GAME){
-		SendQueryStatusFailed(Connection);
-		return;
-	}
+void ProcessBanishIpAddress(TDatabase *Database, TQuery *Query){
+	TReadBuffer Request = Query->Request;
 
 	char CharacterName[30];
 	char IPString[16];
 	char Reason[200];
 	char Comment[200];
-	int GamemasterID = Buffer->Read16();
-	Buffer->ReadString(CharacterName, sizeof(CharacterName));
-	Buffer->ReadString(IPString, sizeof(IPString));
-	Buffer->ReadString(Reason, sizeof(Reason));
-	Buffer->ReadString(Comment, sizeof(Comment));
+	int GamemasterID = (int)Request.Read16();
+	Request.ReadString(CharacterName, sizeof(CharacterName));
+	Request.ReadString(IPString, sizeof(IPString));
+	Request.ReadString(Reason, sizeof(Reason));
+	Request.ReadString(Comment, sizeof(Comment));
 
-	int IPAddress = 0;
-	if(!ParseIPAddress(IPString, &IPAddress)){
-		SendQueryStatusFailed(Connection);
-		return;
-	}
+	int IPAddress;
+	QUERY_FAIL_IF(!ParseIPAddress(IPString, &IPAddress));
 
 	TransactionScope Tx("BanishIP");
-	if(!Tx.Begin()){
-		SendQueryStatusFailed(Connection);
-		return;
-	}
+	QUERY_STOP_IF(!Tx.Begin(Database));
 
-	int CharacterID = GetCharacterID(Connection->WorldID, CharacterName);
-	if(CharacterID == 0){
-		SendQueryStatusError(Connection, 1);
-		return;
-	}
+	int CharacterID;
+	QUERY_STOP_IF(!GetCharacterID(Database, Query->WorldID, CharacterName, &CharacterID));
+	QUERY_ERROR_IF(CharacterID == 0, 1);
 
 	// TODO(fusion): Might be `NO_BANISHMENT`.
-	if(GetCharacterRight(CharacterID, "IP_BANISHMENT")){
-		SendQueryStatusError(Connection, 2);
-		return;
-	}
+	bool IPBanishment;
+	QUERY_STOP_IF(!GetCharacterRight(Database, CharacterID, "IP_BANISHMENT", &IPBanishment));
+	QUERY_ERROR_IF(IPBanishment, 2);
 
-	// IMPORTANT(fusion): It is not a good idea to ban an IP address, specially
-	// V4 addresses, as they may be dynamically assigned or represent the address
-	// of a public ISP router that manages multiple clients.
+	// IMPORTANT(fusion): It is not a good idea to ban IP addresses, specially V4,
+	// as they may be dynamically assigned or represent the address of a public ISP
+	// router that manages multiple clients.
 	int BanishmentDays = 3;
-	if(!InsertIPBanishment(CharacterID, IPAddress, GamemasterID,
-			Reason, Comment, BanishmentDays * 86400)){
-		SendQueryStatusFailed(Connection);
-		return;
-	}
-
-	if(!Tx.Commit()){
-		SendQueryStatusFailed(Connection);
-		return;
-	}
-
-	SendQueryStatusOk(Connection);
+	QUERY_STOP_IF(!InsertIPBanishment(Database, CharacterID, IPAddress,
+			GamemasterID, Reason, Comment, BanishmentDays * 86400));
+	QUERY_STOP_IF(!Tx.Commit());
+	QueryOk(Query);
 }
 
-void ProcessLogCharacterDeathQuery(TConnection *Connection, TReadBuffer *Buffer){
-	if(Connection->ApplicationType != APPLICATION_TYPE_GAME){
-		SendQueryStatusFailed(Connection);
-		return;
-	}
-
+void ProcessLogCharacterDeath(TDatabase *Database, TQuery *Query){
+	TReadBuffer Request = Query->Request;
 	char Remark[30];
-	int CharacterID = (int)Buffer->Read32();
-	int Level = Buffer->Read16();
-	int OffenderID = (int)Buffer->Read32();
-	Buffer->ReadString(Remark, sizeof(Remark));
-	bool Unjustified = Buffer->ReadFlag();
-	int Timestamp = (int)Buffer->Read32();
-	if(!InsertCharacterDeath(Connection->WorldID, CharacterID, Level,
-			OffenderID, Remark, Unjustified, Timestamp)){
-		SendQueryStatusFailed(Connection);
-		return;
-	}
+	int CharacterID = (int)Request.Read32();
+	int Level = (int)Request.Read16();
+	int OffenderID = (int)Request.Read32();
+	Request.ReadString(Remark, sizeof(Remark));
+	bool Unjustified = Request.ReadFlag();
+	int Timestamp = (int)Request.Read32();
+	QUERY_STOP_IF(!InsertCharacterDeath(Database, Query->WorldID, CharacterID,
+							Level, OffenderID, Remark, Unjustified, Timestamp));
+	QueryOk(Query);
 
-	SendQueryStatusOk(Connection);
 }
 
-void ProcessAddBuddyQuery(TConnection *Connection, TReadBuffer *Buffer){
-	if(Connection->ApplicationType != APPLICATION_TYPE_GAME){
-		SendQueryStatusFailed(Connection);
-		return;
-	}
-
-	int AccountID = (int)Buffer->Read32();
-	int BuddyID = (int)Buffer->Read32();
-	if(!InsertBuddy(Connection->WorldID, AccountID, BuddyID)){
-		SendQueryStatusFailed(Connection);
-		return;
-	}
-
-	SendQueryStatusOk(Connection);
+void ProcessAddBuddy(TDatabase *Database, TQuery *Query){
+	TReadBuffer Request = Query->Request;
+	int AccountID = (int)Request.Read32();
+	int BuddyID = (int)Request.Read32();
+	QUERY_STOP_IF(!InsertBuddy(Database, Query->WorldID, AccountID, BuddyID));
+	QueryOk(Query);
 }
 
-void ProcessRemoveBuddyQuery(TConnection *Connection, TReadBuffer *Buffer){
-	if(Connection->ApplicationType != APPLICATION_TYPE_GAME){
-		SendQueryStatusFailed(Connection);
-		return;
-	}
-
-	int AccountID = (int)Buffer->Read32();
-	int BuddyID = (int)Buffer->Read32();
-	if(!DeleteBuddy(Connection->WorldID, AccountID, BuddyID)){
-		SendQueryStatusFailed(Connection);
-		return;
-	}
-
-	SendQueryStatusOk(Connection);
+void ProcessRemoveBuddy(TDatabase *Database, TQuery *Query){
+	TReadBuffer Request = Query->Request;
+	int AccountID = (int)Request.Read32();
+	int BuddyID = (int)Request.Read32();
+	QUERY_STOP_IF(!DeleteBuddy(Database, Query->WorldID, AccountID, BuddyID));
+	QueryOk(Query);
 }
 
-void ProcessDecrementIsOnlineQuery(TConnection *Connection, TReadBuffer *Buffer){
-	if(Connection->ApplicationType != APPLICATION_TYPE_GAME){
-		SendQueryStatusFailed(Connection);
-		return;
-	}
-
-	int CharacterID = (int)Buffer->Read32();
-	if(!DecrementIsOnline(Connection->WorldID, CharacterID)){
-		SendQueryStatusFailed(Connection);
-		return;
-	}
-
-	SendQueryStatusOk(Connection);
+void ProcessDecrementIsOnline(TDatabase *Database, TQuery *Query){
+	TReadBuffer Request = Query->Request;
+	int CharacterID = (int)Request.Read32();
+	QUERY_STOP_IF(!DecrementIsOnline(Database, Query->WorldID, CharacterID));
+	QueryOk(Query);
 }
 
-void ProcessFinishAuctionsQuery(TConnection *Connection, TReadBuffer *Buffer){
-	if(Connection->ApplicationType != APPLICATION_TYPE_GAME){
-		SendQueryStatusFailed(Connection);
-		return;
-	}
-
+void ProcessFinishAuctions(TDatabase *Database, TQuery *Query){
 	DynamicArray<THouseAuction> Auctions;
-	if(!FinishHouseAuctions(Connection->WorldID, &Auctions)){
-		SendQueryStatusFailed(Connection);
-		return;
-	}
+	QUERY_STOP_IF(!FinishHouseAuctions(Database, Query->WorldID, &Auctions));
 
-	TWriteBuffer WriteBuffer = PrepareResponse(Connection, QUERY_STATUS_OK);
+	TWriteBuffer *Response = QueryBeginResponse(Query, QUERY_STATUS_OK);
 	int NumAuctions = std::min<int>(Auctions.Length(), UINT16_MAX);
-	WriteBuffer.Write16((uint16)NumAuctions);
+	Response->Write16((uint16)NumAuctions);
 	for(int i = 0; i < NumAuctions; i += 1){
-		WriteBuffer.Write16((uint16)Auctions[i].HouseID);
-		WriteBuffer.Write32((uint32)Auctions[i].BidderID);
-		WriteBuffer.WriteString(Auctions[i].BidderName);
-		WriteBuffer.Write32((uint32)Auctions[i].BidAmount);
+		Response->Write16((uint16)Auctions[i].HouseID);
+		Response->Write32((uint32)Auctions[i].BidderID);
+		Response->WriteString(Auctions[i].BidderName);
+		Response->Write32((uint32)Auctions[i].BidAmount);
 	}
-	SendResponse(Connection, &WriteBuffer);
+	QueryFinishResponse(Query);
 }
 
-void ProcessTransferHousesQuery(TConnection *Connection, TReadBuffer *Buffer){
-	if(Connection->ApplicationType != APPLICATION_TYPE_GAME){
-		SendQueryStatusFailed(Connection);
-		return;
-	}
-
+void ProcessTransferHouses(TDatabase *Database, TQuery *Query){
 	DynamicArray<THouseTransfer> Transfers;
-	if(!FinishHouseTransfers(Connection->WorldID, &Transfers)){
-		SendQueryStatusFailed(Connection);
-		return;
-	}
+	QUERY_STOP_IF(!FinishHouseTransfers(Database, Query->WorldID, &Transfers));
 
-	TWriteBuffer WriteBuffer = PrepareResponse(Connection, QUERY_STATUS_OK);
+	TWriteBuffer *Response = QueryBeginResponse(Query, QUERY_STATUS_OK);
 	int NumTransfers = std::min<int>(Transfers.Length(), UINT16_MAX);
-	WriteBuffer.Write16((uint16)NumTransfers);
+	Response->Write16((uint16)NumTransfers);
 	for(int i = 0; i < NumTransfers; i += 1){
-		WriteBuffer.Write16((uint16)Transfers[i].HouseID);
-		WriteBuffer.Write32((uint32)Transfers[i].NewOwnerID);
-		WriteBuffer.WriteString(Transfers[i].NewOwnerName);
-		WriteBuffer.Write32((uint32)Transfers[i].Price);
+		Response->Write16((uint16)Transfers[i].HouseID);
+		Response->Write32((uint32)Transfers[i].NewOwnerID);
+		Response->WriteString(Transfers[i].NewOwnerName);
+		Response->Write32((uint32)Transfers[i].Price);
 	}
-	SendResponse(Connection, &WriteBuffer);
+	QueryFinishResponse(Query);
 }
 
-void ProcessEvictFreeAccountsQuery(TConnection *Connection, TReadBuffer *Buffer){
-	if(Connection->ApplicationType != APPLICATION_TYPE_GAME){
-		SendQueryStatusFailed(Connection);
-		return;
-	}
-
+void ProcessEvictFreeAccounts(TDatabase *Database, TQuery *Query){
 	DynamicArray<THouseEviction> Evictions;
-	if(!GetFreeAccountEvictions(Connection->WorldID, &Evictions)){
-		SendQueryStatusFailed(Connection);
-		return;
-	}
+	QUERY_STOP_IF(!GetFreeAccountEvictions(Database, Query->WorldID, &Evictions));
 
-	TWriteBuffer WriteBuffer = PrepareResponse(Connection, QUERY_STATUS_OK);
+	TWriteBuffer *Response = QueryBeginResponse(Query, QUERY_STATUS_OK);
 	int NumEvictions = std::min<int>(Evictions.Length(), UINT16_MAX);
-	WriteBuffer.Write16((uint16)NumEvictions);
+	Response->Write16((uint16)NumEvictions);
 	for(int i = 0; i < NumEvictions; i += 1){
-		WriteBuffer.Write16((uint16)Evictions[i].HouseID);
-		WriteBuffer.Write32((uint32)Evictions[i].OwnerID);
+		Response->Write16((uint16)Evictions[i].HouseID);
+		Response->Write32((uint32)Evictions[i].OwnerID);
 	}
-	SendResponse(Connection, &WriteBuffer);
+	QueryFinishResponse(Query);
 }
 
-void ProcessEvictDeletedCharactersQuery(TConnection *Connection, TReadBuffer *Buffer){
-	if(Connection->ApplicationType != APPLICATION_TYPE_GAME){
-		SendQueryStatusFailed(Connection);
-		return;
-	}
-
+void ProcessEvictDeletedCharacters(TDatabase *Database, TQuery *Query){
 	DynamicArray<THouseEviction> Evictions;
-	if(!GetDeletedCharacterEvictions(Connection->WorldID, &Evictions)){
-		SendQueryStatusFailed(Connection);
-		return;
-	}
+	QUERY_STOP_IF(!GetDeletedCharacterEvictions(Database, Query->WorldID, &Evictions));
 
-	TWriteBuffer WriteBuffer = PrepareResponse(Connection, QUERY_STATUS_OK);
+	TWriteBuffer *Response = QueryBeginResponse(Query, QUERY_STATUS_OK);
 	int NumEvictions = std::min<int>(Evictions.Length(), UINT16_MAX);
-	WriteBuffer.Write16((uint16)NumEvictions);
+	Response->Write16((uint16)NumEvictions);
 	for(int i = 0; i < NumEvictions; i += 1){
-		WriteBuffer.Write16((uint16)Evictions[i].HouseID);
+		Response->Write16((uint16)Evictions[i].HouseID);
 	}
-	SendResponse(Connection, &WriteBuffer);
+	QueryFinishResponse(Query);
 }
 
-void ProcessEvictExGuildleadersQuery(TConnection *Connection, TReadBuffer *Buffer){
-	if(Connection->ApplicationType != APPLICATION_TYPE_GAME){
-		SendQueryStatusFailed(Connection);
-		return;
-	}
-
+void ProcessEvictExGuildleaders(TDatabase *Database, TQuery *Query){
 	// NOTE(fusion): This is a bit different from the other eviction functions.
 	// The server doesn't maintain guild information for characters so it will
 	// send a list of guild houses with their owners and we're supposed to check
 	// whether the owner is still a guild leader. I don't think we should check
 	// any other information as the server is authoritative on house information.
 	DynamicArray<int> Evictions;
-	int NumGuildHouses = Buffer->Read16();
+	TReadBuffer Request = Query->Request;
+	int NumGuildHouses = (int)Request.Read16();
 	for(int i = 0; i < NumGuildHouses; i += 1){
-		int HouseID = Buffer->Read16();
-		int OwnerID = (int)Buffer->Read32();
-		if(!GetGuildLeaderStatus(Connection->WorldID, OwnerID)){
+		int HouseID = (int)Request.Read16();
+		int OwnerID = (int)Request.Read32();
+
+		bool IsGuildLeader;
+		QUERY_STOP_IF(!GetGuildLeaderStatus(Database, Query->WorldID, OwnerID, &IsGuildLeader));
+		if(IsGuildLeader){
 			Evictions.Push(HouseID);
 		}
 	}
 
-	TWriteBuffer WriteBuffer = PrepareResponse(Connection, QUERY_STATUS_OK);
+	TWriteBuffer *Response = QueryBeginResponse(Query, QUERY_STATUS_OK);
 	int NumEvictions = std::min<int>(Evictions.Length(), UINT16_MAX);
-	WriteBuffer.Write16((uint16)NumEvictions);
+	Response->Write16((uint16)NumEvictions);
 	for(int i = 0; i < NumEvictions; i += 1){
-		WriteBuffer.Write16((uint16)Evictions[i]);
+		Response->Write16((uint16)Evictions[i]);
 	}
-	SendResponse(Connection, &WriteBuffer);
+	QueryFinishResponse(Query);
 }
 
-void ProcessInsertHouseOwnerQuery(TConnection *Connection, TReadBuffer *Buffer){
-	if(Connection->ApplicationType != APPLICATION_TYPE_GAME){
-		SendQueryStatusFailed(Connection);
-		return;
-	}
-
-	int HouseID = Buffer->Read16();
-	int OwnerID = (int)Buffer->Read32();
-	int PaidUntil = (int)Buffer->Read32();
-	if(!InsertHouseOwner(Connection->WorldID, HouseID, OwnerID, PaidUntil)){
-		SendQueryStatusFailed(Connection);
-		return;
-	}
-
-	SendQueryStatusOk(Connection);
+void ProcessInsertHouseOwner(TDatabase *Database, TQuery *Query){
+	TReadBuffer Request = Query->Request;
+	int HouseID = (int)Request.Read16();
+	int OwnerID = (int)Request.Read32();
+	int PaidUntil = (int)Request.Read32();
+	QUERY_STOP_IF(!InsertHouseOwner(Database, Query->WorldID, HouseID, OwnerID, PaidUntil));
+	QueryOk(Query);
 }
 
-void ProcessUpdateHouseOwnerQuery(TConnection *Connection, TReadBuffer *Buffer){
-	if(Connection->ApplicationType != APPLICATION_TYPE_GAME){
-		SendQueryStatusFailed(Connection);
-		return;
-	}
-
-	int HouseID = Buffer->Read16();
-	int OwnerID = (int)Buffer->Read32();
-	int PaidUntil = (int)Buffer->Read32();
-	if(!UpdateHouseOwner(Connection->WorldID, HouseID, OwnerID, PaidUntil)){
-		SendQueryStatusFailed(Connection);
-		return;
-	}
-
-	SendQueryStatusOk(Connection);
+void ProcessUpdateHouseOwner(TDatabase *Database, TQuery *Query){
+	TReadBuffer Request = Query->Request;
+	int HouseID = (int)Request.Read16();
+	int OwnerID = (int)Request.Read32();
+	int PaidUntil = (int)Request.Read32();
+	QUERY_STOP_IF(!UpdateHouseOwner(Database, Query->WorldID, HouseID, OwnerID, PaidUntil));
+	QueryOk(Query);
 }
 
-void ProcessDeleteHouseOwnerQuery(TConnection *Connection, TReadBuffer *Buffer){
-	if(Connection->ApplicationType != APPLICATION_TYPE_GAME){
-		SendQueryStatusFailed(Connection);
-		return;
-	}
-
-	int HouseID = Buffer->Read16();
-	if(!DeleteHouseOwner(Connection->WorldID, HouseID)){
-		SendQueryStatusFailed(Connection);
-		return;
-	}
-
-	SendQueryStatusOk(Connection);
+void ProcessDeleteHouseOwner(TDatabase *Database, TQuery *Query){
+	TReadBuffer Request = Query->Request;
+	int HouseID = (int)Request.Read16();
+	QUERY_STOP_IF(!DeleteHouseOwner(Database, Query->WorldID, HouseID));
+	QueryOk(Query);
 }
 
-void ProcessGetHouseOwnersQuery(TConnection *Connection, TReadBuffer *Buffer){
-	if(Connection->ApplicationType != APPLICATION_TYPE_GAME){
-		SendQueryStatusFailed(Connection);
-		return;
-	}
-
+void ProcessGetHouseOwners(TDatabase *Database, TQuery *Query){
 	DynamicArray<THouseOwner> Owners;
-	if(!GetHouseOwners(Connection->WorldID, &Owners)){
-		SendQueryStatusFailed(Connection);
-		return;
-	}
+	QUERY_STOP_IF(!GetHouseOwners(Database, Query->WorldID, &Owners));
 
-	TWriteBuffer WriteBuffer = PrepareResponse(Connection, QUERY_STATUS_OK);
+	TWriteBuffer *Response = QueryBeginResponse(Query, QUERY_STATUS_OK);
 	int NumOwners = std::min<int>(Owners.Length(), UINT16_MAX);
-	WriteBuffer.Write16((uint16)NumOwners);
+	Response->Write16((uint16)NumOwners);
 	for(int i = 0; i < NumOwners; i += 1){
-		WriteBuffer.Write16((uint16)Owners[i].HouseID);
-		WriteBuffer.Write32((uint32)Owners[i].OwnerID);
-		WriteBuffer.WriteString(Owners[i].OwnerName);
-		WriteBuffer.Write32((uint32)Owners[i].PaidUntil);
+		Response->Write16((uint16)Owners[i].HouseID);
+		Response->Write32((uint32)Owners[i].OwnerID);
+		Response->WriteString(Owners[i].OwnerName);
+		Response->Write32((uint32)Owners[i].PaidUntil);
 	}
-	SendResponse(Connection, &WriteBuffer);
+	QueryFinishResponse(Query);
 }
 
-void ProcessGetAuctionsQuery(TConnection *Connection, TReadBuffer *Buffer){
-	if(Connection->ApplicationType != APPLICATION_TYPE_GAME){
-		SendQueryStatusFailed(Connection);
-		return;
-	}
-
+void ProcessGetAuctions(TDatabase *Database, TQuery *Query){
 	DynamicArray<int> Auctions;
-	if(!GetHouseAuctions(Connection->WorldID, &Auctions)){
-		SendQueryStatusFailed(Connection);
-		return;
-	}
+	QUERY_STOP_IF(!GetHouseAuctions(Database, Query->WorldID, &Auctions));
 
-	TWriteBuffer WriteBuffer = PrepareResponse(Connection, QUERY_STATUS_OK);
+	TWriteBuffer *Response = QueryBeginResponse(Query, QUERY_STATUS_OK);
 	int NumAuctions = std::min<int>(Auctions.Length(), UINT16_MAX);
-	WriteBuffer.Write16((uint16)NumAuctions);
+	Response->Write16((uint16)NumAuctions);
 	for(int i = 0; i < NumAuctions; i += 1){
-		WriteBuffer.Write16((uint16)Auctions[i]);
+		Response->Write16((uint16)Auctions[i]);
 	}
-	SendResponse(Connection, &WriteBuffer);
+	QueryFinishResponse(Query);
 }
 
-void ProcessStartAuctionQuery(TConnection *Connection, TReadBuffer *Buffer){
-	if(Connection->ApplicationType != APPLICATION_TYPE_GAME){
-		SendQueryStatusFailed(Connection);
-		return;
-	}
-
-	int HouseID = Buffer->Read16();
-	if(!StartHouseAuction(Connection->WorldID, HouseID)){
-		SendQueryStatusFailed(Connection);
-		return;
-	}
-
-	SendQueryStatusOk(Connection);
+void ProcessStartAuction(TDatabase *Database, TQuery *Query){
+	TReadBuffer Request = Query->Request;
+	int HouseID = (int)Request.Read16();
+	QUERY_STOP_IF(!StartHouseAuction(Database, Query->WorldID, HouseID));
+	QueryOk(Query);
 }
 
-void ProcessInsertHousesQuery(TConnection *Connection, TReadBuffer *Buffer){
-	if(Connection->ApplicationType != APPLICATION_TYPE_GAME){
-		SendQueryStatusFailed(Connection);
-		return;
-	}
-
+void ProcessInsertHouses(TDatabase *Database, TQuery *Query){
+	TReadBuffer Request = Query->Request;
 	TransactionScope Tx("InsertHouses");
-	if(!Tx.Begin()){
-		SendQueryStatusFailed(Connection);
-		return;
-	}
+	QUERY_STOP_IF(!Tx.Begin(Database));
+	QUERY_STOP_IF(!DeleteHouses(Database, Query->WorldID));
 
-	if(!DeleteHouses(Connection->WorldID)){
-		SendQueryStatusFailed(Connection);
-		return;
-	}
-
-	int NumHouses = Buffer->Read16();
+	int NumHouses = (int)Request.Read16();
 	if(NumHouses > 0){
-G		THouse *Houses = (THouse*)alloca(NumHouses * sizeof(THouse));
+		THouse *Houses = (THouse*)alloca(NumHouses * sizeof(THouse));
 		for(int i = 0; i < NumHouses; i += 1){
-			Houses[i].HouseID = Buffer->Read16();
-			Buffer->ReadString(Houses[i].Name, sizeof(Houses[i].Name));
-			Houses[i].Rent = (int)Buffer->Read32();
-			Buffer->ReadString(Houses[i].Description, sizeof(Houses[i].Description));
-			Houses[i].Size = Buffer->Read16();
-			Houses[i].PositionX = Buffer->Read16();
-			Houses[i].PositionY = Buffer->Read16();
-			Houses[i].PositionZ = Buffer->Read8();
-			Buffer->ReadString(Houses[i].Town, sizeof(Houses[i].Town));
-			Houses[i].GuildHouse = Buffer->ReadFlag();
+			Houses[i].HouseID = (int)Request.Read16();
+			Request.ReadString(Houses[i].Name, sizeof(Houses[i].Name));
+			Houses[i].Rent = (int)Request.Read32();
+			Request.ReadString(Houses[i].Description, sizeof(Houses[i].Description));
+			Houses[i].Size = (int)Request.Read16();
+			Houses[i].PositionX = (int)Request.Read16();
+			Houses[i].PositionY = (int)Request.Read16();
+			Houses[i].PositionZ = (int)Request.Read8();
+			Request.ReadString(Houses[i].Town, sizeof(Houses[i].Town));
+			Houses[i].GuildHouse = Request.ReadFlag();
 		}
 
-		if(!InsertHouses(Connection->WorldID, NumHouses, Houses)){
-			SendQueryStatusFailed(Connection);
-			return;
-		}
+		QUERY_STOP_IF(!InsertHouses(Database, Query->WorldID, NumHouses, Houses));
 	}
 
-	if(!Tx.Commit()){
-		SendQueryStatusFailed(Connection);
-		return;
-	}
-
-	SendQueryStatusOk(Connection);
+	QUERY_STOP_IF(!Tx.Commit());
+	QueryOk(Query);
 }
 
-void ProcessClearIsOnlineQuery(TConnection *Connection, TReadBuffer *Buffer){
-	if(Connection->ApplicationType != APPLICATION_TYPE_GAME){
-		SendQueryStatusFailed(Connection);
-		return;
-	}
-
+void ProcessClearIsOnline(TDatabase *Database, TQuery *Query){
 	int NumAffectedCharacters;
-	if(!ClearIsOnline(Connection->WorldID, &NumAffectedCharacters)){
-		SendQueryStatusFailed(Connection);
-		return;
-	}
-
-	TWriteBuffer WriteBuffer = PrepareResponse(Connection, QUERY_STATUS_OK);
-	WriteBuffer.Write16((uint16)NumAffectedCharacters);
-	SendResponse(Connection, &WriteBuffer);
+	QUERY_STOP_IF(!ClearIsOnline(Database, Query->WorldID, &NumAffectedCharacters));
+	TWriteBuffer *Response = QueryBeginResponse(Query, QUERY_STATUS_OK);
+	Response->Write16((uint16)NumAffectedCharacters);
+	QueryFinishResponse(Query);
 }
 
-void ProcessCreatePlayerlistQuery(TConnection *Connection, TReadBuffer *Buffer){
-	if(Connection->ApplicationType != APPLICATION_TYPE_GAME){
-		SendQueryStatusFailed(Connection);
-		return;
-	}
-
+void ProcessCreatePlayerlist(TDatabase *Database, TQuery *Query){
+	TReadBuffer Request = Query->Request;
 	TransactionScope Tx("OnlineList");
-	if(!Tx.Begin()){
-		SendQueryStatusFailed(Connection);
-		return;
-	}
-
-	if(!DeleteOnlineCharacters(Connection->WorldID)){
-		SendQueryStatusFailed(Connection);
-		return;
-	}
+	QUERY_STOP_IF(!Tx.Begin(Database));
+	QUERY_STOP_IF(!DeleteOnlineCharacters(Database, Query->WorldID));
 
 	// TODO(fusion): I think `NumCharacters` may be used to signal that the
 	// server is going OFFLINE, in which case we'd have to add an `Online`
 	// column to `Worlds` and update it here.
 
 	bool NewRecord = false;
-	int NumCharacters = Buffer->Read16();
+	int NumCharacters = (int)Request.Read16();
 	if(NumCharacters != 0xFFFF && NumCharacters > 0){
 		TOnlineCharacter *Characters = (TOnlineCharacter*)alloca(NumCharacters * sizeof(TOnlineCharacter));
 		for(int i = 0; i < NumCharacters; i += 1){
-			Buffer->ReadString(Characters[i].Name, sizeof(Characters[i].Name));
-			Characters[i].Level = Buffer->Read16();
-			Buffer->ReadString(Characters[i].Profession, sizeof(Characters[i].Profession));
+			Request.ReadString(Characters[i].Name, sizeof(Characters[i].Name));
+			Characters[i].Level = (int)Request.Read16();
+			Request.ReadString(Characters[i].Profession, sizeof(Characters[i].Profession));
 		}
 
-		if(!InsertOnlineCharacters(Connection->WorldID, NumCharacters, Characters)){
-			SendQueryStatusFailed(Connection);
-			return;
-		}
-
-		if(!CheckOnlineRecord(Connection->WorldID, NumCharacters, &NewRecord)){
-			SendQueryStatusFailed(Connection);
-			return;
-		}
+		QUERY_STOP_IF(!InsertOnlineCharacters(Database, Query->WorldID, NumCharacters, Characters));
+		QUERY_STOP_IF(!CheckOnlineRecord(Database, Query->WorldID, NumCharacters, &NewRecord));
 	}
 
-	if(!Tx.Commit()){
-		SendQueryStatusFailed(Connection);
-		return;
-	}
+	QUERY_STOP_IF(!Tx.Commit());
 
-	TWriteBuffer WriteBuffer = PrepareResponse(Connection, QUERY_STATUS_OK);
-	WriteBuffer.WriteFlag(NewRecord);
-	SendResponse(Connection, &WriteBuffer);
+	TWriteBuffer *Response = QueryBeginResponse(Query, QUERY_STATUS_OK);
+	Response->WriteFlag(NewRecord);
+	QueryFinishResponse(Query);
 }
 
-void ProcessLogKilledCreaturesQuery(TConnection *Connection, TReadBuffer *Buffer){
-	if(Connection->ApplicationType != APPLICATION_TYPE_GAME){
-		SendQueryStatusFailed(Connection);
-		return;
-	}
-
-	int NumStats = Buffer->Read16();
+void ProcessLogKilledCreatures(TDatabase *Database, TQuery *Query){
+	TReadBuffer Request = Query->Request;
+	int NumStats = (int)Request.Read16();
 	TKillStatistics *Stats = (TKillStatistics*)alloca(NumStats * sizeof(TKillStatistics));
 	for(int i = 0; i < NumStats; i += 1){
-		Buffer->ReadString(Stats[i].RaceName, sizeof(Stats[i].RaceName));
-		Stats[i].PlayersKilled = (int)Buffer->Read32();
-		Stats[i].TimesKilled = (int)Buffer->Read32();
+		Request.ReadString(Stats[i].RaceName, sizeof(Stats[i].RaceName));
+		Stats[i].PlayersKilled = (int)Request.Read32();
+		Stats[i].TimesKilled = (int)Request.Read32();
 	}
 
 	if(NumStats > 0){
 		TransactionScope Tx("LogKilledCreatures");
-		if(!Tx.Begin()){
-			SendQueryStatusFailed(Connection);
-			return;
-		}
-
-		if(!MergeKillStatistics(Connection->WorldID, NumStats, Stats)){
-			SendQueryStatusFailed(Connection);
-			return;
-		}
-
-		if(!Tx.Commit()){
-			SendQueryStatusFailed(Connection);
-			return;
-		}
+		QUERY_STOP_IF(!Tx.Begin(Database));
+		QUERY_STOP_IF(!MergeKillStatistics(Database, Query->WorldID, NumStats, Stats));
+		QUERY_STOP_IF(!Tx.Commit());
 	}
 
-	SendQueryStatusOk(Connection);
+	QueryOk(Query);
 }
 
-void ProcessLoadPlayersQuery(TConnection *Connection, TReadBuffer *Buffer){
-	if(Connection->ApplicationType != APPLICATION_TYPE_GAME){
-		SendQueryStatusFailed(Connection);
-		return;
-	}
-
+void ProcessLoadPlayers(TDatabase *Database, TQuery *Query){
 	// IMPORTANT(fusion): The server expect 10K entries at most. It is probably
 	// some shared hard coded constant.
 	int NumEntries;
 	TCharacterIndexEntry Entries[10000];
-	int MinimumCharacterID = (int)Buffer->Read32();
-	if(!GetCharacterIndexEntries(Connection->WorldID,
-			MinimumCharacterID, NARRAY(Entries), &NumEntries, Entries)){
-		SendQueryStatusFailed(Connection);
-		return;
-	}
+	TReadBuffer Request = Query->Request;
+	int MinimumCharacterID = (int)Request.Read32();
+	QUERY_STOP_IF(!GetCharacterIndexEntries(Database, Query->WorldID,
+			MinimumCharacterID, NARRAY(Entries), &NumEntries, Entries));
 
-	TWriteBuffer WriteBuffer = PrepareResponse(Connection, QUERY_STATUS_OK);
-	WriteBuffer.Write32((uint32)NumEntries);
+	TWriteBuffer *Response = QueryBeginResponse(Query, QUERY_STATUS_OK);
+	Response->Write32((uint32)NumEntries);
 	for(int i = 0; i < NumEntries; i += 1){
-		WriteBuffer.WriteString(Entries[i].Name);
-		WriteBuffer.Write32((uint32)Entries[i].CharacterID);
+		Response->WriteString(Entries[i].Name);
+		Response->Write32((uint32)Entries[i].CharacterID);
 	}
-	SendResponse(Connection, &WriteBuffer);
+	QueryFinishResponse(Query);
 }
 
-void ProcessExcludeFromAuctionsQuery(TConnection *Connection, TReadBuffer *Buffer){
-	if(Connection->ApplicationType != APPLICATION_TYPE_GAME){
-		SendQueryStatusFailed(Connection);
-		return;
-	}
-
+void ProcessExcludeFromAuctions(TDatabase *Database, TQuery *Query){
+	TReadBuffer Request = Query->Request;
 	TransactionScope Tx("ExcludeFromAuctions");
-	if(!Tx.Begin()){
-		SendQueryStatusFailed(Connection);
-		return;
-	}
+	QUERY_STOP_IF(!Tx.Begin(Database));
 
-	int CharacterID = (int)Buffer->Read32();
-	bool Banish = Buffer->ReadFlag();
+	int CharacterID = (int)Request.Read32();
+	bool Banish = Request.ReadFlag();
 	int ExclusionDays = 7;
 	int BanishmentID = 0;
 	if(Banish){
 		int BanishmentDays = 7;
 		bool FinalWarning = false;
-		TBanishmentStatus Status = GetBanishmentStatus(CharacterID);
+		TBanishmentStatus Status;
+		QUERY_STOP_IF(!GetBanishmentStatus(Database, CharacterID, &Status));
 		CompoundBanishment(Status, &BanishmentDays, &FinalWarning);
-		if(!InsertBanishment(CharacterID, 0, 0, "Spoiling Auction",
-				"", FinalWarning, BanishmentDays * 86400, &BanishmentID)){
-			SendQueryStatusFailed(Connection);
-			return;
-		}
+		QUERY_STOP_IF(!InsertBanishment(Database, CharacterID, 0,
+				0, "Spoiling Auction", "", FinalWarning, BanishmentDays * 86400,
+				&BanishmentID));
 	}
 
-	if(!ExcludeFromAuctions(Connection->WorldID,
-			CharacterID, ExclusionDays * 86400, BanishmentID)){
-		SendQueryStatusFailed(Connection);
-		return;
-	}
-
-	if(!Tx.Commit()){
-		SendQueryStatusFailed(Connection);
-		return;
-	}
-
-	SendQueryStatusOk(Connection);
+	QUERY_STOP_IF(!ExcludeFromAuctions(Database, Query->WorldID,
+			CharacterID, ExclusionDays * 86400, BanishmentID));
+	QUERY_STOP_IF(!Tx.Commit());
+	QueryOk(Query);
 }
 
-void ProcessCancelHouseTransferQuery(TConnection *Connection, TReadBuffer *Buffer){
-	if(Connection->ApplicationType != APPLICATION_TYPE_GAME){
-		SendQueryStatusFailed(Connection);
-		return;
-	}
-
+void ProcessCancelHouseTransfer(TDatabase *Database, TQuery *Query){
 	// TODO(fusion): Not sure what this is used for. Maybe house transfer rows
 	// are kept permanently and this query is used to delete/flag it, in case
 	// the it didn't complete. We might need to refine `FinishHouseTransfers`.
 	//int HouseID = Buffer->Read16();
-	SendQueryStatusOk(Connection);
+	QueryOk(Query);
 }
 
-void ProcessLoadWorldConfigQuery(TConnection *Connection, TReadBuffer *Buffer){
-	if(Connection->ApplicationType != APPLICATION_TYPE_GAME){
-		SendQueryStatusFailed(Connection);
-		return;
-	}
-
+void ProcessLoadWorldConfig(TDatabase *Database, TQuery *Query){
 	TWorldConfig WorldConfig = {};
-	if(!GetWorldConfig(Connection->WorldID, &WorldConfig)){
-		SendQueryStatusFailed(Connection);
-		return;
-	}
+	QUERY_STOP_IF(!GetWorldConfig(Database, Query->WorldID, &WorldConfig));
 
-	TWriteBuffer WriteBuffer = PrepareResponse(Connection, QUERY_STATUS_OK);
-	WriteBuffer.Write8((uint8)WorldConfig.Type);
-	WriteBuffer.Write8((uint8)WorldConfig.RebootTime);
-	WriteBuffer.Write32BE((uint32)WorldConfig.IPAddress);
-	WriteBuffer.Write16((uint16)WorldConfig.Port);
-	WriteBuffer.Write16((uint16)WorldConfig.MaxPlayers);
-	WriteBuffer.Write16((uint16)WorldConfig.PremiumPlayerBuffer);
-	WriteBuffer.Write16((uint16)WorldConfig.MaxNewbies);
-	WriteBuffer.Write16((uint16)WorldConfig.PremiumNewbieBuffer);
-	SendResponse(Connection, &WriteBuffer);
+	int IPAddress;
+	QUERY_FAIL_IF(!ResolveHostName(WorldConfig.HostName, &IPAddress));
+
+	TWriteBuffer *Response = QueryBeginResponse(Query, QUERY_STATUS_OK);
+	Response->Write8((uint8)WorldConfig.Type);
+	Response->Write8((uint8)WorldConfig.RebootTime);
+	Response->Write32BE((uint32)IPAddress);
+	Response->Write16((uint16)WorldConfig.Port);
+	Response->Write16((uint16)WorldConfig.MaxPlayers);
+	Response->Write16((uint16)WorldConfig.PremiumPlayerBuffer);
+	Response->Write16((uint16)WorldConfig.MaxNewbies);
+	Response->Write16((uint16)WorldConfig.PremiumNewbieBuffer);
+	QueryFinishResponse(Query);
 }
 
-void ProcessCreateAccountQuery(TConnection *Connection, TReadBuffer *Buffer){
+void ProcessCreateAccount(TDatabase *Database, TQuery *Query){
 	// TODO(fusion): We'd ideally want to automatically generate an account number
 	// and return it in case of success but that would also require a more robust
 	// website infrastructure with verification e-mails, etc...
 	char Email[100];
 	char Password[30];
-	int AccountID = (int)Buffer->Read32();
-	Buffer->ReadString(Email, sizeof(Email));
-	Buffer->ReadString(Password, sizeof(Password));
-
-	// NOTE(fusion): Inputs should be checked before hand.
-	if(AccountID <= 0 || StringEmpty(Email) || StringEmpty(Password)){
-		SendQueryStatusFailed(Connection);
-		return;
-	}
-
-	uint8 Auth[64];
-	if(!GenerateAuth(Password, Auth, sizeof(Auth))){
-		SendQueryStatusFailed(Connection);
-		return;
-	}
-
-	TransactionScope Tx("CreateAccount");
-	if(!Tx.Begin()){
-		SendQueryStatusFailed(Connection);
-		return;
-	}
-
-	if(AccountNumberExists(AccountID)){
-		SendQueryStatusError(Connection, 1);
-		return;
-	}
-
-	if(AccountEmailExists(Email)){
-		SendQueryStatusError(Connection, 2);
-		return;
-	}
-
-	if(!CreateAccount(AccountID, Email, Auth, sizeof(Auth))){
-		SendQueryStatusFailed(Connection);
-		return;
-	}
-
-	if(!Tx.Commit()){
-		SendQueryStatusFailed(Connection);
-		return;
-	}
-
-	SendQueryStatusOk(Connection);
-}
-
-bool ProcessCreateAccountQuery(TConnection *Connection, TReadBuffer *Buffer){
-	// TODO(fusion): We'd ideally want to automatically generate an account number
-	// and return it in case of success but that would also require a more robust
-	// website infrastructure with verification e-mails, etc...
-	char Email[100];
-	char Password[30];
-	int AccountID = (int)Buffer->Read32();
-	Buffer->ReadString(Email, sizeof(Email));
-	Buffer->ReadString(Password, sizeof(Password));
+	TReadBuffer Request = Query->Request;
+	int AccountID = (int)Request.Read32();
+	Request.ReadString(Email, sizeof(Email));
+	Request.ReadString(Password, sizeof(Password));
 
 	// NOTE(fusion): Inputs should be checked before hand.
 	QUERY_FAIL_IF(AccountID <= 0);
@@ -1972,283 +1376,174 @@ bool ProcessCreateAccountQuery(TConnection *Connection, TReadBuffer *Buffer){
 	QUERY_FAIL_IF(!GenerateAuth(Password, Auth, sizeof(Auth)));
 
 	TransactionScope Tx("CreateAccount");
-	QUERY_RETRY_IF(!Tx.Begin(Database));
-	QUERY_RETRY_IF(!AccountNumberExists(Database, AccountID, &AccountExists));
-	QUERY_ERROR_IF(AccountExists, 1);
-	QUERY_RETRY_IF(!AccountEmailExists(Database, Email, &AccountExists));
-	QUERY_ERROR_IF(AccountExists, 2);
-	QUERY_FAIL_IF(!CreateAccount(AccountID, Email, Auth, sizeof(Auth)));
-	QUERY_RETRY_IF(!Tx.Commit());
+	QUERY_STOP_IF(!Tx.Begin(Database));
 
+	bool AccountExists;
+	QUERY_STOP_IF(!AccountNumberExists(Database, AccountID, &AccountExists));
+	QUERY_ERROR_IF(AccountExists, 1);
+	QUERY_STOP_IF(!AccountEmailExists(Database, Email, &AccountExists));
+	QUERY_ERROR_IF(AccountExists, 2);
+
+	QUERY_STOP_IF(!CreateAccount(Database, AccountID, Email, Auth, sizeof(Auth)));
+	QUERY_STOP_IF(!Tx.Commit());
 	QueryOk(Query);
-	return true;
 }
 
-void ProcessCreateCharacterQuery(TConnection *Connection, TReadBuffer *Buffer){
+void ProcessCreateCharacter(TDatabase *Database, TQuery *Query){
 	char WorldName[30];
 	char CharacterName[30];
-	Buffer->ReadString(WorldName, sizeof(WorldName));
-	int AccountID = (int)Buffer->Read32();
-	Buffer->ReadString(CharacterName, sizeof(CharacterName));
-	int Sex = Buffer->Read8();
+	TReadBuffer Request = Query->Request;
+	Request.ReadString(WorldName, sizeof(WorldName));
+	int AccountID = (int)Request.Read32();
+	Request.ReadString(CharacterName, sizeof(CharacterName));
+	int Sex = (int)Request.Read8();
 
 	// NOTE(fusion): Inputs should be checked before hand.
-	if(AccountID <= 0 || (Sex != 1 && Sex != 2)
-			|| StringEmpty(WorldName)
-			|| StringEmpty(CharacterName)){
-		SendQueryStatusFailed(Connection);
-		return;
-	}
+	QUERY_FAIL_IF(AccountID <= 0);
+	QUERY_FAIL_IF(Sex != 1 && Sex != 2);
+	QUERY_FAIL_IF(StringEmpty(WorldName));
+	QUERY_FAIL_IF(StringEmpty(CharacterName));
 
 	TransactionScope Tx("CreateCharacter");
-	if(!Tx.Begin()){
-		SendQueryStatusFailed(Connection);
-		return;
-	}
+	QUERY_STOP_IF(!Tx.Begin(Database));
 
-	int WorldID = GetWorldID(WorldName);
-	if(WorldID == 0){
-		SendQueryStatusError(Connection, 1);
-		return;
-	}
+	int WorldID;
+	QUERY_STOP_IF(!GetWorldID(Database, WorldName, &WorldID));
+	QUERY_ERROR_IF(WorldID == 0, 1);
 
-	if(!AccountNumberExists(AccountID)){
-		SendQueryStatusError(Connection, 2);
-		return;
-	}
+	bool AccountExists;
+	QUERY_STOP_IF(!AccountNumberExists(Database, AccountID, &AccountExists));
+	QUERY_ERROR_IF(!AccountExists, 2);
 
-	if(CharacterNameExists(CharacterName)){
-		SendQueryStatusError(Connection, 3);
-		return;
-	}
+	bool CharacterExists;
+	QUERY_STOP_IF(!CharacterNameExists(Database, CharacterName, &CharacterExists));
+	QUERY_ERROR_IF(CharacterExists, 3);
 
-	if(!CreateCharacter(WorldID, AccountID, CharacterName, Sex)){
-		SendQueryStatusFailed(Connection);
-		return;
-	}
-
-	if(!Tx.Commit()){
-		SendQueryStatusFailed(Connection);
-		return;
-	}
-
-	SendQueryStatusOk(Connection);
+	QUERY_STOP_IF(!CreateCharacter(Database, WorldID, AccountID, CharacterName, Sex));
+	QUERY_STOP_IF(!Tx.Commit());
+	QueryOk(Query);
 }
 
-void ProcessGetAccountSummaryQuery(TConnection *Connection, TReadBuffer *Buffer){
-	int AccountID = (int)Buffer->Read32();
+void ProcessGetAccountSummary(TDatabase *Database, TQuery *Query){
+	TReadBuffer Request = Query->Request;
+	int AccountID = (int)Request.Read32();
 
-	if(AccountID <= 0){
-		SendQueryStatusFailed(Connection);
-		return;
-	}
+	QUERY_FAIL_IF(AccountID <= 0);
 
 	TAccount Account;
-	if(!GetAccountData(AccountID, &Account)){
-		SendQueryStatusFailed(Connection);
-		return;
-	}
-
-	if(Account.AccountID != AccountID){
-		SendQueryStatusFailed(Connection);
-		return;
-	}
+	QUERY_STOP_IF(!GetAccountData(Database, AccountID, &Account));
+	QUERY_FAIL_IF(Account.AccountID == 0 || Account.AccountID != AccountID);
 
 	DynamicArray<TCharacterSummary> Characters;
-	if(!GetCharacterSummaries(AccountID, &Characters)){
-		SendQueryStatusFailed(Connection);
-		return;
-	}
+	QUERY_STOP_IF(!GetCharacterSummaries(Database, AccountID, &Characters));
 
-	TWriteBuffer WriteBuffer = PrepareResponse(Connection, QUERY_STATUS_OK);
-	WriteBuffer.WriteString(Account.Email);
-	WriteBuffer.Write16((uint16)Account.PremiumDays);
-	WriteBuffer.Write16((uint16)Account.PendingPremiumDays);
-	WriteBuffer.WriteFlag(Account.Deleted);
+	TWriteBuffer *Response = QueryBeginResponse(Query, QUERY_STATUS_OK);
+	Response->WriteString(Account.Email);
+	Response->Write16((uint16)Account.PremiumDays);
+	Response->Write16((uint16)Account.PendingPremiumDays);
+	Response->WriteFlag(Account.Deleted);
 	int NumCharacters = std::min<int>(Characters.Length(), UINT8_MAX);
-	WriteBuffer.Write8((uint8)NumCharacters);
+	Response->Write8((uint8)NumCharacters);
 	for(int i = 0; i < NumCharacters; i += 1){
-		WriteBuffer.WriteString(Characters[i].Name);
-		WriteBuffer.WriteString(Characters[i].World);
-		WriteBuffer.Write16((uint16)Characters[i].Level);
-		WriteBuffer.WriteString(Characters[i].Profession);
-		WriteBuffer.WriteFlag(Characters[i].Online);
-		WriteBuffer.WriteFlag(Characters[i].Deleted);
+		Response->WriteString(Characters[i].Name);
+		Response->WriteString(Characters[i].World);
+		Response->Write16((uint16)Characters[i].Level);
+		Response->WriteString(Characters[i].Profession);
+		Response->WriteFlag(Characters[i].Online);
+		Response->WriteFlag(Characters[i].Deleted);
 	}
-	SendResponse(Connection, &WriteBuffer);
+	QueryFinishResponse(Query);
 }
 
-void ProcessGetCharacterProfileQuery(TConnection *Connection, TReadBuffer *Buffer){
+void ProcessGetCharacterProfile(TDatabase *Database, TQuery *Query){
 	char CharacterName[30];
-	Buffer->ReadString(CharacterName, sizeof(CharacterName));
+	TReadBuffer Request = Query->Request;
+	Request.ReadString(CharacterName, sizeof(CharacterName));
 
-	if(StringEmpty(CharacterName)){
-		SendQueryStatusFailed(Connection);
-		return;
-	}
+	QUERY_FAIL_IF(StringEmpty(CharacterName));
 
 	TCharacterProfile Character;
-	if(!GetCharacterProfile(CharacterName, &Character)){
-		SendQueryStatusFailed(Connection);
-		return;
-	}
+	QUERY_STOP_IF(!GetCharacterProfile(Database, CharacterName, &Character));
+	QUERY_ERROR_IF(!StringEqCI(Character.Name, CharacterName), 1);
 
-	if(!StringEqCI(Character.Name, CharacterName)){
-		SendQueryStatusError(Connection, 1);
-		return;
-	}
-
-	TWriteBuffer WriteBuffer = PrepareResponse(Connection, QUERY_STATUS_OK);
-	WriteBuffer.WriteString(Character.Name);
-	WriteBuffer.WriteString(Character.World);
-	WriteBuffer.Write8((uint8)Character.Sex);
-	WriteBuffer.WriteString(Character.Guild);
-	WriteBuffer.WriteString(Character.Rank);
-	WriteBuffer.WriteString(Character.Title);
-	WriteBuffer.Write16((uint16)Character.Level);
-	WriteBuffer.WriteString(Character.Profession);
-	WriteBuffer.WriteString(Character.Residence);
-	WriteBuffer.Write32((uint32)Character.LastLogin);
-	WriteBuffer.Write16((uint16)Character.PremiumDays);
-	WriteBuffer.WriteFlag(Character.Online);
-	WriteBuffer.WriteFlag(Character.Deleted);
-	SendResponse(Connection, &WriteBuffer);
+	TWriteBuffer *Response = QueryBeginResponse(Query, QUERY_STATUS_OK);
+	Response->WriteString(Character.Name);
+	Response->WriteString(Character.World);
+	Response->Write8((uint8)Character.Sex);
+	Response->WriteString(Character.Guild);
+	Response->WriteString(Character.Rank);
+	Response->WriteString(Character.Title);
+	Response->Write16((uint16)Character.Level);
+	Response->WriteString(Character.Profession);
+	Response->WriteString(Character.Residence);
+	Response->Write32((uint32)Character.LastLogin);
+	Response->Write16((uint16)Character.PremiumDays);
+	Response->WriteFlag(Character.Online);
+	Response->WriteFlag(Character.Deleted);
+	QueryFinishResponse(Query);
 }
 
-void ProcessGetWorldsQuery(TConnection *Connection, TReadBuffer *Buffer){
+void ProcessGetWorlds(TDatabase *Database, TQuery *Query){
 	DynamicArray<TWorld> Worlds;
-	if(!GetWorlds(&Worlds)){
-		SendQueryStatusFailed(Connection);
-		return;
-	}
+	QUERY_STOP_IF(!GetWorlds(Database, &Worlds));
 
-	TWriteBuffer WriteBuffer = PrepareResponse(Connection, QUERY_STATUS_OK);
+	TWriteBuffer *Response = QueryBeginResponse(Query, QUERY_STATUS_OK);
 	int NumWorlds = std::min<int>(Worlds.Length(), UINT8_MAX);
-	WriteBuffer.Write8((uint8)NumWorlds);
+	Response->Write8((uint8)NumWorlds);
 	for(int i = 0; i < NumWorlds; i += 1){
-		WriteBuffer.WriteString(Worlds[i].Name);
-		WriteBuffer.Write8((uint8)Worlds[i].Type);
-		WriteBuffer.Write16((uint16)Worlds[i].NumPlayers);
-		WriteBuffer.Write16((uint16)Worlds[i].MaxPlayers);
-		WriteBuffer.Write16((uint16)Worlds[i].OnlineRecord);
-		WriteBuffer.Write32((uint32)Worlds[i].OnlineRecordTimestamp);
+		Response->WriteString(Worlds[i].Name);
+		Response->Write8((uint8)Worlds[i].Type);
+		Response->Write16((uint16)Worlds[i].NumPlayers);
+		Response->Write16((uint16)Worlds[i].MaxPlayers);
+		Response->Write16((uint16)Worlds[i].OnlineRecord);
+		Response->Write32((uint32)Worlds[i].OnlineRecordTimestamp);
 	}
-	SendResponse(Connection, &WriteBuffer);
+	QueryFinishResponse(Query);
 }
 
-void ProcessGetOnlineCharactersQuery(TConnection *Connection, TReadBuffer *Buffer){
+void ProcessGetOnlineCharacters(TDatabase *Database, TQuery *Query){
 	char WorldName[30];
-	Buffer->ReadString(WorldName, sizeof(WorldName));
+	TReadBuffer Request = Query->Request;
+	Request.ReadString(WorldName, sizeof(WorldName));
 
-	int WorldID = GetWorldID(WorldName);
-	if(WorldID == 0){
-		SendQueryStatusFailed(Connection);
-		return;
-	}
+	int WorldID;
+	QUERY_STOP_IF(!GetWorldID(Database, WorldName, &WorldID));
+	QUERY_FAIL_IF(WorldID == 0);
 
 	DynamicArray<TOnlineCharacter> Characters;
-	if(!GetOnlineCharacters(WorldID, &Characters)){
-		SendQueryStatusFailed(Connection);
-		return;
-	}
+	QUERY_STOP_IF(!GetOnlineCharacters(Database, WorldID, &Characters));
 
-	TWriteBuffer WriteBuffer = PrepareResponse(Connection, QUERY_STATUS_OK);
+	TWriteBuffer *Response = QueryBeginResponse(Query, QUERY_STATUS_OK);
 	int NumCharacters = std::min<int>(Characters.Length(), UINT16_MAX);
-	WriteBuffer.Write16((uint16)NumCharacters);
+	Response->Write16((uint16)NumCharacters);
 	for(int i = 0; i < NumCharacters; i += 1){
-		WriteBuffer.WriteString(Characters[i].Name);
-		WriteBuffer.Write16((uint16)Characters[i].Level);
-		WriteBuffer.WriteString(Characters[i].Profession);
+		Response->WriteString(Characters[i].Name);
+		Response->Write16((uint16)Characters[i].Level);
+		Response->WriteString(Characters[i].Profession);
 	}
-	SendResponse(Connection, &WriteBuffer);
+	QueryFinishResponse(Query);
 }
 
-void ProcessGetKillStatisticsQuery(TConnection *Connection, TReadBuffer *Buffer){
+void ProcessGetKillStatistics(TDatabase *Database, TQuery *Query){
 	char WorldName[30];
-	Buffer->ReadString(WorldName, sizeof(WorldName));
+	TReadBuffer Request = Query->Request;
+	Request.ReadString(WorldName, sizeof(WorldName));
 
-	int WorldID = GetWorldID(WorldName);
-	if(WorldID == 0){
-		SendQueryStatusFailed(Connection);
-		return;
-	}
+	int WorldID;
+	QUERY_STOP_IF(!GetWorldID(Database, WorldName, &WorldID));
+	QUERY_FAIL_IF(WorldID == 0);
 
 	DynamicArray<TKillStatistics> Stats;
-	if(!GetKillStatistics(WorldID, &Stats)){
-		SendQueryStatusFailed(Connection);
-		return;
-	}
+	QUERY_STOP_IF(!GetKillStatistics(Database, WorldID, &Stats));
 
-	TWriteBuffer WriteBuffer = PrepareResponse(Connection, QUERY_STATUS_OK);
+	TWriteBuffer *Response = QueryBeginResponse(Query, QUERY_STATUS_OK);
 	int NumStats = std::min<int>(Stats.Length(), UINT16_MAX);
-	WriteBuffer.Write16((uint16)NumStats);
+	Response->Write16((uint16)NumStats);
 	for(int i = 0; i < NumStats; i += 1){
-		WriteBuffer.WriteString(Stats[i].RaceName);
-		WriteBuffer.Write32((uint32)Stats[i].PlayersKilled);
-		WriteBuffer.Write32((uint32)Stats[i].TimesKilled);
+		Response->WriteString(Stats[i].RaceName);
+		Response->Write32((uint32)Stats[i].PlayersKilled);
+		Response->Write32((uint32)Stats[i].TimesKilled);
 	}
-	SendResponse(Connection, &WriteBuffer);
+	QueryFinishResponse(Query);
 }
 
-void ProcessConnectionQuery(TConnection *Connection){
-	TReadBuffer Buffer(Connection->Buffer, Connection->RWSize);
-	int Query = Buffer.Read8();
-	if(!Connection->Authorized){
-		if(Query == QUERY_LOGIN){
-			ProcessLoginQuery(Connection, &Buffer);
-		}else{
-			LOG_ERR("Unauthorized query %d from %s", QueryType, Connection->RemoteAddress);
-			CloseConnection(Connection);
-		}
-		return;
-	}
-
-	switch(Query){
-		case QUERY_CHECK_ACCOUNT_PASSWORD:		ProcessCheckAccountPasswordQuery(Connection, &Buffer); break;
-		case QUERY_LOGIN_ACCOUNT:				ProcessLoginAccountQuery(Connection, &Buffer); break;
-		case QUERY_LOGIN_ADMIN:					ProcessLoginAdminQuery(Connection, &Buffer); break;
-		case QUERY_LOGIN_GAME:					ProcessLoginGameQuery(Connection, &Buffer); break;
-		case QUERY_LOGOUT_GAME:					ProcessLogoutGameQuery(Connection, &Buffer); break;
-		case QUERY_SET_NAMELOCK:				ProcessSetNamelockQuery(Connection, &Buffer); break;
-		case QUERY_BANISH_ACCOUNT:				ProcessBanishAccountQuery(Connection, &Buffer); break;
-		case QUERY_SET_NOTATION:				ProcessSetNotationQuery(Connection, &Buffer); break;
-		case QUERY_REPORT_STATEMENT:			ProcessReportStatementQuery(Connection, &Buffer); break;
-		case QUERY_BANISH_IP_ADDRESS:			ProcessBanishIPAddressQuery(Connection, &Buffer); break;
-		case QUERY_LOG_CHARACTER_DEATH:			ProcessLogCharacterDeathQuery(Connection, &Buffer); break;
-		case QUERY_ADD_BUDDY:					ProcessAddBuddyQuery(Connection, &Buffer); break;
-		case QUERY_REMOVE_BUDDY:				ProcessRemoveBuddyQuery(Connection, &Buffer); break;
-		case QUERY_DECREMENT_IS_ONLINE:			ProcessDecrementIsOnlineQuery(Connection, &Buffer); break;
-		case QUERY_FINISH_AUCTIONS:				ProcessFinishAuctionsQuery(Connection, &Buffer); break;
-		case QUERY_TRANSFER_HOUSES:				ProcessTransferHousesQuery(Connection, &Buffer); break;
-		case QUERY_EVICT_FREE_ACCOUNTS:			ProcessEvictFreeAccountsQuery(Connection, &Buffer); break;
-		case QUERY_EVICT_DELETED_CHARACTERS:	ProcessEvictDeletedCharactersQuery(Connection, &Buffer); break;
-		case QUERY_EVICT_EX_GUILDLEADERS:		ProcessEvictExGuildleadersQuery(Connection, &Buffer); break;
-		case QUERY_INSERT_HOUSE_OWNER:			ProcessInsertHouseOwnerQuery(Connection, &Buffer); break;
-		case QUERY_UPDATE_HOUSE_OWNER:			ProcessUpdateHouseOwnerQuery(Connection, &Buffer); break;
-		case QUERY_DELETE_HOUSE_OWNER:			ProcessDeleteHouseOwnerQuery(Connection, &Buffer); break;
-		case QUERY_GET_HOUSE_OWNERS:			ProcessGetHouseOwnersQuery(Connection, &Buffer); break;
-		case QUERY_GET_AUCTIONS:				ProcessGetAuctionsQuery(Connection, &Buffer); break;
-		case QUERY_START_AUCTION:				ProcessStartAuctionQuery(Connection, &Buffer); break;
-		case QUERY_INSERT_HOUSES:				ProcessInsertHousesQuery(Connection, &Buffer); break;
-		case QUERY_CLEAR_IS_ONLINE:				ProcessClearIsOnlineQuery(Connection, &Buffer); break;
-		case QUERY_CREATE_PLAYERLIST:			ProcessCreatePlayerlistQuery(Connection, &Buffer); break;
-		case QUERY_LOG_KILLED_CREATURES:		ProcessLogKilledCreaturesQuery(Connection, &Buffer); break;
-		case QUERY_LOAD_PLAYERS:				ProcessLoadPlayersQuery(Connection, &Buffer); break;
-		case QUERY_EXCLUDE_FROM_AUCTIONS:		ProcessExcludeFromAuctionsQuery(Connection, &Buffer); break;
-		case QUERY_CANCEL_HOUSE_TRANSFER:		ProcessCancelHouseTransferQuery(Connection, &Buffer); break;
-		case QUERY_LOAD_WORLD_CONFIG:			ProcessLoadWorldConfigQuery(Connection, &Buffer); break;
-		case QUERY_CREATE_ACCOUNT:				ProcessCreateAccountQuery(Connection, &Buffer); break;
-		case QUERY_CREATE_CHARACTER:			ProcessCreateCharacterQuery(Connection, &Buffer); break;
-		case QUERY_GET_ACCOUNT_SUMMARY:			ProcessGetAccountSummaryQuery(Connection, &Buffer); break;
-		case QUERY_GET_CHARACTER_PROFILE:		ProcessGetCharacterProfileQuery(Connection, &Buffer); break;
-		case QUERY_GET_WORLDS:					ProcessGetWorldsQuery(Connection, &Buffer); break;
-		case QUERY_GET_ONLINE_CHARACTERS:		ProcessGetOnlineCharactersQuery(Connection, &Buffer); break;
-		case QUERY_GET_KILL_STATISTICS:			ProcessGetKillStatisticsQuery(Connection, &Buffer); break;
-		default:{
-			LOG_ERR("Unknown query %d from %s", Query, Connection->RemoteAddress);
-			SendQueryStatusFailed(Connection);
-			break;
-		}
-	}
-}
-#endif

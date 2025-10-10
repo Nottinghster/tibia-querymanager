@@ -863,6 +863,7 @@ enum : int {
 	QUERY_STATUS_OK			= 0,
 	QUERY_STATUS_ERROR		= 1,
 	QUERY_STATUS_FAILED		= 3,
+	QUERY_STATUS_PENDING	= 4,
 };
 
 enum : int {
@@ -941,47 +942,46 @@ void QueryOk(TQuery *Query);
 void QueryError(TQuery *Query, int ErrorCode);
 void QueryFailed(TQuery *Query);
 
-bool ProcessInternalResolveWorld(TDatabase *Database, TQuery *Query);
-bool ProcessCheckAccountPassword(TDatabase *Database, TQuery *Query);
-bool ProcessLoginAccount(TDatabase *Database, TQuery *Query);
-bool ProcessLoginAdmin(TDatabase *Database, TQuery *Query);
-bool ProcessLoginGame(TDatabase *Database, TQuery *Query);
-bool ProcessLogoutGame(TDatabase *Database, TQuery *Query);
-bool ProcessSetNamelock(TDatabase *Database, TQuery *Query);
-bool ProcessBanishAccount(TDatabase *Database, TQuery *Query);
-bool ProcessSetNotation(TDatabase *Database, TQuery *Query);
-bool ProcessReportStatement(TDatabase *Database, TQuery *Query);
-bool ProcessBanishIpAddress(TDatabase *Database, TQuery *Query);
-bool ProcessLogCharacterDeath(TDatabase *Database, TQuery *Query);
-bool ProcessAddBuddy(TDatabase *Database, TQuery *Query);
-bool ProcessRemoveBuddy(TDatabase *Database, TQuery *Query);
-bool ProcessDecrementIsOnline(TDatabase *Database, TQuery *Query);
-bool ProcessFinishAuctions(TDatabase *Database, TQuery *Query);
-bool ProcessTransferHouses(TDatabase *Database, TQuery *Query);
-bool ProcessEvictFreeAccounts(TDatabase *Database, TQuery *Query);
-bool ProcessEvictDeletedCharacters(TDatabase *Database, TQuery *Query);
-bool ProcessEvictExGuildleaders(TDatabase *Database, TQuery *Query);
-bool ProcessInsertHouseOwner(TDatabase *Database, TQuery *Query);
-bool ProcessUpdateHouseOwner(TDatabase *Database, TQuery *Query);
-bool ProcessDeleteHouseOwner(TDatabase *Database, TQuery *Query);
-bool ProcessGetHouseOwners(TDatabase *Database, TQuery *Query);
-bool ProcessGetAuctions(TDatabase *Database, TQuery *Query);
-bool ProcessStartAuction(TDatabase *Database, TQuery *Query);
-bool ProcessInsertHouses(TDatabase *Database, TQuery *Query);
-bool ProcessClearIsOnline(TDatabase *Database, TQuery *Query);
-bool ProcessCreatePlayerlist(TDatabase *Database, TQuery *Query);
-bool ProcessLogKilledCreatures(TDatabase *Database, TQuery *Query);
-bool ProcessLoadPlayers(TDatabase *Database, TQuery *Query);
-bool ProcessExcludeFromAuctions(TDatabase *Database, TQuery *Query);
-bool ProcessCancelHouseTransfer(TDatabase *Database, TQuery *Query);
-bool ProcessLoadWorldConfig(TDatabase *Database, TQuery *Query);
-bool ProcessCreateAccount(TDatabase *Database, TQuery *Query);
-bool ProcessCreateCharacter(TDatabase *Database, TQuery *Query);
-bool ProcessGetAccountSummary(TDatabase *Database, TQuery *Query);
-bool ProcessGetCharacterProfile(TDatabase *Database, TQuery *Query);
-bool ProcessGetWorlds(TDatabase *Database, TQuery *Query);
-bool ProcessGetOnlineCharacters(TDatabase *Database, TQuery *Query);
-bool ProcessGetKillStatistics(TDatabase *Database, TQuery *Query);
+void ProcessInternalResolveWorld(TDatabase *Database, TQuery *Query);
+void ProcessCheckAccountPassword(TDatabase *Database, TQuery *Query);
+void ProcessLoginAccount(TDatabase *Database, TQuery *Query);
+void ProcessLoginGame(TDatabase *Database, TQuery *Query);
+void ProcessLogoutGame(TDatabase *Database, TQuery *Query);
+void ProcessSetNamelock(TDatabase *Database, TQuery *Query);
+void ProcessBanishAccount(TDatabase *Database, TQuery *Query);
+void ProcessSetNotation(TDatabase *Database, TQuery *Query);
+void ProcessReportStatement(TDatabase *Database, TQuery *Query);
+void ProcessBanishIpAddress(TDatabase *Database, TQuery *Query);
+void ProcessLogCharacterDeath(TDatabase *Database, TQuery *Query);
+void ProcessAddBuddy(TDatabase *Database, TQuery *Query);
+void ProcessRemoveBuddy(TDatabase *Database, TQuery *Query);
+void ProcessDecrementIsOnline(TDatabase *Database, TQuery *Query);
+void ProcessFinishAuctions(TDatabase *Database, TQuery *Query);
+void ProcessTransferHouses(TDatabase *Database, TQuery *Query);
+void ProcessEvictFreeAccounts(TDatabase *Database, TQuery *Query);
+void ProcessEvictDeletedCharacters(TDatabase *Database, TQuery *Query);
+void ProcessEvictExGuildleaders(TDatabase *Database, TQuery *Query);
+void ProcessInsertHouseOwner(TDatabase *Database, TQuery *Query);
+void ProcessUpdateHouseOwner(TDatabase *Database, TQuery *Query);
+void ProcessDeleteHouseOwner(TDatabase *Database, TQuery *Query);
+void ProcessGetHouseOwners(TDatabase *Database, TQuery *Query);
+void ProcessGetAuctions(TDatabase *Database, TQuery *Query);
+void ProcessStartAuction(TDatabase *Database, TQuery *Query);
+void ProcessInsertHouses(TDatabase *Database, TQuery *Query);
+void ProcessClearIsOnline(TDatabase *Database, TQuery *Query);
+void ProcessCreatePlayerlist(TDatabase *Database, TQuery *Query);
+void ProcessLogKilledCreatures(TDatabase *Database, TQuery *Query);
+void ProcessLoadPlayers(TDatabase *Database, TQuery *Query);
+void ProcessExcludeFromAuctions(TDatabase *Database, TQuery *Query);
+void ProcessCancelHouseTransfer(TDatabase *Database, TQuery *Query);
+void ProcessLoadWorldConfig(TDatabase *Database, TQuery *Query);
+void ProcessCreateAccount(TDatabase *Database, TQuery *Query);
+void ProcessCreateCharacter(TDatabase *Database, TQuery *Query);
+void ProcessGetAccountSummary(TDatabase *Database, TQuery *Query);
+void ProcessGetCharacterProfile(TDatabase *Database, TQuery *Query);
+void ProcessGetWorlds(TDatabase *Database, TQuery *Query);
+void ProcessGetOnlineCharacters(TDatabase *Database, TQuery *Query);
+void ProcessGetKillStatistics(TDatabase *Database, TQuery *Query);
 
 // connections.cc
 //==============================================================================
