@@ -1,7 +1,7 @@
 -- NOTE(fusion): The query manager WON'T automatically run this but the game
 -- server still requires at least the world config to be able to boot up. It
 -- is probably a good idea to keep this separated from `schema.sql` and then
--- running it with `sqlite3 -echo tibia.db < sql/init.sql`, although it is
+-- running it with `sqlite3 -echo tibia.db < sqlite/init.sql`, although it is
 -- not mandatory.
 --	Because this isn't automatically managed, all queries are wrapped in a
 -- transaction to avoid partial writes in case of errors.

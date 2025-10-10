@@ -75,20 +75,44 @@ typedef size_t usize;
 		TRAP();																	\
 	}while(0)
 
+#if !DATABASE_SQLITE && !DATABASE_POSTGRESQL && !DATABASE_MYSQL
+#	error "No database system defined."
+#endif
+
 struct TConfig{
 	// HostCache Config
 	int  MaxCachedHostNames;
 	int  HostNameExpireTime;
 
 	// Database Config
-	int  MaxCachedStatements;
-	char DatabaseFile[100];
-	char DatabaseHost[100];
-	int  DatabasePort;
-	char DatabaseUser[30];
-	char DatabasePassword[30];
-	char DatabaseName[30];
-	bool DatabaseTLS;
+#if DATABASE_SQLITE
+	struct{
+		char File[100];
+		int  MaxCachedStatements;
+	} SQLite;
+#elif DATABASE_POSTGRESQL
+	struct{
+		char UnixSocket[100];
+		char Host[100];
+		int  Port;
+		char User[30];
+		char Password[30];
+		char Database[30];
+		bool TLS;
+		int  MaxCachedStatements;
+	} PostgreSQL;
+#elif DATABASE_MYSQL
+	struct{
+		char UnixSocket[100];
+		char Host[100];
+		int  Port;
+		char User[30];
+		char Password[30];
+		char Database[30];
+		bool TLS;
+		int  MaxCachedStatements;
+	} MySQL;
+#endif
 
 	// Connection Config
 	int  QueryManagerPort;

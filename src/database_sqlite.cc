@@ -1,3 +1,4 @@
+#if DATABASE_SQLITE
 #include "querymanager.hh"
 #include "sqlite3.h"
 
@@ -43,8 +44,8 @@ public:
 
 static void EnsureStatementCache(TDatabase *Database){
 	if(Database->CachedStatements == NULL){
-		ASSERT(g_Config.MaxCachedStatements > 0);
-		Database->MaxCachedStatements = g_Config.MaxCachedStatements;
+		ASSERT(g_Config.SQLite.MaxCachedStatements > 0);
+		Database->MaxCachedStatements = g_Config.SQLite.MaxCachedStatements;
 		Database->CachedStatements = (TCachedStatement*)calloc(
 				Database->MaxCachedStatements, sizeof(TCachedStatement));
 	}
@@ -233,8 +234,8 @@ static bool InitDatabaseSchema(TDatabase *Database){
 		return false;
 	}
 
-	if(!ExecFile(Database, "sql/schema.sql")){
-		LOG_ERR("Failed to execute \"sql/schema.sql\"");
+	if(!ExecFile(Database, "sqlite/schema.sql")){
+		LOG_ERR("Failed to execute \"sqlite/schema.sql\"");
 		return false;
 	}
 
@@ -255,7 +256,7 @@ static bool UpgradeDatabaseSchema(TDatabase *Database, int UserVersion){
 	char FileName[256];
 	int NewVersion = UserVersion;
 	while(true){
-		snprintf(FileName, sizeof(FileName), "sql/upgrade-%d.sql", NewVersion);
+		snprintf(FileName, sizeof(FileName), "sqlite/upgrade-%d.sql", NewVersion);
 		if(FileExists(FileName)){
 			NewVersion += 1;
 		}else{
@@ -346,9 +347,9 @@ void DatabaseClose(TDatabase *Database){
 TDatabase *DatabaseOpen(void){
 	TDatabase *Database = (TDatabase*)calloc(1, sizeof(TDatabase));
 	int Flags = SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_NOMUTEX;
-	if(sqlite3_open_v2(g_Config.DatabaseFile, &Database->Handle, Flags, NULL) != SQLITE_OK){
+	if(sqlite3_open_v2(g_Config.SQLite.File, &Database->Handle, Flags, NULL) != SQLITE_OK){
 		LOG_ERR("Failed to open database at \"%s\": %s\n",
-				g_Config.DatabaseFile, sqlite3_errmsg(Database->Handle));
+				g_Config.SQLite.File, sqlite3_errmsg(Database->Handle));
 		DatabaseClose(Database);
 		return NULL;
 	}
@@ -357,7 +358,7 @@ TDatabase *DatabaseOpen(void){
 		LOG_ERR("Failed to open database file \"%s\" with WRITE PERMISSIONS."
 				" Make sure it has the appropriate permissions and is owned"
 				" by the same user running the query manager.",
-				g_Config.DatabaseFile);
+				g_Config.SQLite.File);
 		DatabaseClose(Database);
 		return NULL;
 	}
@@ -2482,3 +2483,5 @@ bool CheckOnlineRecord(TDatabase *Database, int WorldID, int NumCharacters, bool
 	*NewRecord = sqlite3_changes(Database->Handle) > 0;
 	return true;
 }
+
+#endif //DATABASE_SQLITE

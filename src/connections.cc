@@ -612,7 +612,7 @@ void ProcessConnections(void){
 	ASSERT(NumFds > 0);
 	int NumEvents = poll(Fds, NumFds, -1);
 	if(NumEvents == -1){
-		if(errno != ETIMEDOUT){
+		if(errno != ETIMEDOUT && errno != EINTR){
 			LOG_ERR("Failed to poll connections: (%d) %s",
 					errno, strerrordesc_np(errno));
 		}

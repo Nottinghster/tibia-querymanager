@@ -67,6 +67,9 @@ int64 GetClockMonotonicMS(void){
 	QueryPerformanceFrequency(&Frequency);
 	return (int64)((Counter.QuadPart * 1000) / Frequency.QuadPart);
 #else
+	// NOTE(fusion): The coarse monotonic clock has a larger resolution but is
+	// supposed to be faster, even avoiding system calls in some cases. It should
+	// be fine for millisecond precision which is what we're using.
 	struct timespec Time;
 	clock_gettime(CLOCK_MONOTONIC_COARSE, &Time);
 	return ((int64)Time.tv_sec * 1000)
@@ -374,22 +377,46 @@ bool ReadConfig(const char *FileName, TConfig *Config){
 			ReadIntegerConfig(&Config->MaxCachedHostNames, Val);
 		}else if(StringEqCI(Key, "HostNameExpireTime")){
 			ReadDurationConfig(&Config->HostNameExpireTime, Val);
-		}else if(StringEqCI(Key, "MaxCachedStatements")){
-			ReadIntegerConfig(&Config->MaxCachedStatements, Val);
-		}else if(StringEqCI(Key, "DatabaseFile")){
-			ReadStringBufConfig(Config->DatabaseFile, Val);
-		}else if(StringEqCI(Key, "DatabaseHost")){
-			ReadStringBufConfig(Config->DatabaseHost, Val);
-		}else if(StringEqCI(Key, "DatabasePort")){
-			ReadIntegerConfig(&Config->DatabasePort, Val);
-		}else if(StringEqCI(Key, "DatabaseUser")){
-			ReadStringBufConfig(Config->DatabaseUser, Val);
-		}else if(StringEqCI(Key, "DatabasePassword")){
-			ReadStringBufConfig(Config->DatabasePassword, Val);
-		}else if(StringEqCI(Key, "DatabaseName")){
-			ReadStringBufConfig(Config->DatabaseName, Val);
-		}else if(StringEqCI(Key, "DatabaseTLS")){
-			ReadBooleanConfig(&Config->DatabaseTLS, Val);
+#if DATABASE_SQLITE
+		}else if(StringEqCI(Key, "SQLite.File")){
+			ReadStringBufConfig(Config->SQLite.File, Val);
+		}else if(StringEqCI(Key, "SQLite.MaxCachedStatements")){
+			ReadIntegerConfig(&Config->SQLite.MaxCachedStatements, Val);
+#elif DATABASE_POSTGRESQL
+		}else if(StringEqCI(Key, "PostgreSQL.UnixSocket")){
+			ReadStringBufConfig(Config->PostgreSQL.UnixSocket, Val);
+		}else if(StringEqCI(Key, "PostgreSQL.Host")){
+			ReadStringBufConfig(Config->PostgreSQL.Host, Val);
+		}else if(StringEqCI(Key, "PostgreSQL.Port")){
+			ReadIntegerConfig(&Config->PostgreSQL.Port, Val);
+		}else if(StringEqCI(Key, "PostgreSQL.User")){
+			ReadStringBufConfig(Config->PostgreSQL.User, Val);
+		}else if(StringEqCI(Key, "PostgreSQL.Password")){
+			ReadStringBufConfig(Config->PostgreSQL.Password, Val);
+		}else if(StringEqCI(Key, "PostgreSQL.Database")){
+			ReadStringBufConfig(Config->PostgreSQL.Database, Val);
+		}else if(StringEqCI(Key, "PostgreSQL.TLS")){
+			ReadBooleanConfig(&Config->PostgreSQL.TLS, Val);
+		}else if(StringEqCI(Key, "PostgreSQL.MaxCachedStatements")){
+			ReadIntegerConfig(&Config->PostgreSQL.MaxCachedStatements, Val);
+#elif DATABASE_MYSQL
+		}else if(StringEqCI(Key, "MySQL.UnixSocket")){
+			ReadStringBufConfig(Config->MySQL.UnixSocket, Val);
+		}else if(StringEqCI(Key, "MySQL.Host")){
+			ReadStringBufConfig(Config->MySQL.Host, Val);
+		}else if(StringEqCI(Key, "MySQL.Port")){
+			ReadIntegerConfig(&Config->MySQL.Port, Val);
+		}else if(StringEqCI(Key, "MySQL.User")){
+			ReadStringBufConfig(Config->MySQL.User, Val);
+		}else if(StringEqCI(Key, "MySQL.Password")){
+			ReadStringBufConfig(Config->MySQL.Password, Val);
+		}else if(StringEqCI(Key, "MySQL.Database")){
+			ReadStringBufConfig(Config->MySQL.Database, Val);
+		}else if(StringEqCI(Key, "MySQL.TLS")){
+			ReadBooleanConfig(&Config->MySQL.TLS, Val);
+		}else if(StringEqCI(Key, "MySQL.MaxCachedStatements")){
+			ReadIntegerConfig(&Config->MySQL.MaxCachedStatements, Val);
+#endif
 		}else if(StringEqCI(Key, "QueryManagerPort")){
 			ReadIntegerConfig(&Config->QueryManagerPort, Val);
 		}else if(StringEqCI(Key, "QueryManagerPassword")){
@@ -445,27 +472,41 @@ int main(int argc, const char **argv){
 	g_StartTimeMS = GetClockMonotonicMS();
 
 	// HostCache Config
-	g_Config.MaxCachedHostNames      = 100;
-	g_Config.HostNameExpireTime      = 30 * 60 * 1000; // milliseconds
+	g_Config.MaxCachedHostNames = 100;
+	g_Config.HostNameExpireTime = 30 * 60 * 1000; // milliseconds
 
 	// Database Config
-	g_Config.MaxCachedStatements     = 100;
-	StringBufCopy(g_Config.DatabaseFile, "tibia.db");
-	StringBufCopy(g_Config.DatabaseHost, "localhost");
-	g_Config.DatabasePort            = 5432;
-	StringBufCopy(g_Config.DatabaseUser, "tibia");
-	StringBufCopy(g_Config.DatabasePassword, "");
-	StringBufCopy(g_Config.DatabaseName, "");
-	g_Config.DatabaseTLS             = true;
+#if DATABASE_SQLITE
+	StringBufCopy(g_Config.SQLite.File, "tibia.db");
+	g_Config.SQLite.MaxCachedStatements = 100;
+#elif DATABASE_POSTGRESQL
+	StringBufCopy(g_Config.PostgreSQL.UnixSocket, "");
+	StringBufCopy(g_Config.PostgreSQL.Host, "localhost");
+	g_Config.PostgreSQL.Port = 5432;
+	StringBufCopy(g_Config.PostgreSQL.User, "postgres");
+	StringBufCopy(g_Config.PostgreSQL.Password, "");
+	StringBufCopy(g_Config.PostgreSQL.Database, "tibia");
+	g_Config.PostgreSQL.TLS = true;
+	g_Config.PostgreSQL.MaxCachedStatements = 100;
+#elif DATABASE_MYSQL
+	StringBufCopy(g_Config.MySQL.UnixSocket, "");
+	StringBufCopy(g_Config.MySQL.Host, "localhost");
+	g_Config.MySQL.Port = 5432;
+	StringBufCopy(g_Config.MySQL.User, "postgres");
+	StringBufCopy(g_Config.MySQL.Password, "");
+	StringBufCopy(g_Config.MySQL.Database, "tibia");
+	g_Config.MySQL.TLS = true;
+	g_Config.MySQL.MaxCachedStatements = 100;
+#endif
 
 	// Connection Config
-	g_Config.QueryManagerPort        = 7174;
+	g_Config.QueryManagerPort = 7174;
 	StringBufCopy(g_Config.QueryManagerPassword, "");
-	g_Config.QueryWorkerThreads      = 1;
-	g_Config.QueryBufferSize         = (int)MB(1);
-	g_Config.QueryMaxAttempts        = 2;
-	g_Config.MaxConnections          = 50;
-	g_Config.MaxConnectionIdleTime   = 60 * 1000;      // milliseconds
+	g_Config.QueryWorkerThreads = 1;
+	g_Config.QueryBufferSize = (int)MB(1);
+	g_Config.QueryMaxAttempts = 3;
+	g_Config.MaxConnections = 25;
+	g_Config.MaxConnectionIdleTime = 60 * 1000; // milliseconds
 
 	LOG("Tibia Query Manager v0.2");
 	if(!ReadConfig("config.cfg", &g_Config)){
@@ -473,21 +514,34 @@ int main(int argc, const char **argv){
 	}
 
 	// NOTE(fusion): Print config values for debugging purposes.
-	LOG("Max cached host names:    %d",     g_Config.MaxCachedHostNames);
-	LOG("Host name expire time:    %dms",   g_Config.HostNameExpireTime);
-	LOG("Max cached statements:    %d",     g_Config.MaxCachedStatements);
-	LOG("Database file:            \"%s\"", g_Config.DatabaseFile);
-	LOG("Database host:            \"%s\"", g_Config.DatabaseHost);
-	LOG("Database port:            %d",     g_Config.DatabasePort);
-	LOG("Database user:            \"%s\"", g_Config.DatabaseUser);
-	LOG("Database name:            \"%s\"", g_Config.DatabaseName);
-	LOG("Database TLS:             %s",     g_Config.DatabaseTLS ? "true" : "false");
-	LOG("Query manager port:       %d",     g_Config.QueryManagerPort);
-	LOG("Query worker threads:     %d",     g_Config.QueryWorkerThreads);
-	LOG("Query buffer size:        %d",     g_Config.QueryBufferSize);
-	LOG("Query max attempts:       %d",     g_Config.QueryMaxAttempts);
-	LOG("Max connections:          %d",     g_Config.MaxConnections);
-	LOG("Max connection idle time: %dms",   g_Config.MaxConnectionIdleTime);
+	LOG("Max cached host names:            %d",     g_Config.MaxCachedHostNames);
+	LOG("Host name expire time:            %dms",   g_Config.HostNameExpireTime);
+#if DATABASE_SQLITE
+	LOG("SQLite file:                      \"%s\"", g_Config.SQLite.File);
+	LOG("SQLite max cached statements:     %d",     g_Config.SQLite.MaxCachedStatements);
+#elif DATABASE_POSTGRESQL
+	LOG("PostgreSQL unix socket:           \"%s\"", g_Config.PostgreSQL.UnixSocket);
+	LOG("PostgreSQL host:                  \"%s\"", g_Config.PostgreSQL.Host);
+	LOG("PostgreSQL port:                  %d",     g_Config.PostgreSQL.Port);
+	LOG("PostgreSQL user:                  \"%s\"", g_Config.PostgreSQL.User);
+	LOG("PostgreSQL database:              \"%s\"", g_Config.PostgreSQL.Database);
+	LOG("PostgreSQL TLS:                   %s",     g_Config.PostgreSQL.TLS ? "true" : "false");
+	LOG("PostgreSQL max cached statements: %d",     g_Config.PostgreSQL.MaxCachedStatements);
+#elif DATABASE_MYSQL
+	LOG("MySQL unix socket:                \"%s\"", g_Config.MySQL.UnixSocket);
+	LOG("MySQL host:                       \"%s\"", g_Config.MySQL.Host);
+	LOG("MySQL port:                       %d",     g_Config.MySQL.Port);
+	LOG("MySQL user:                       \"%s\"", g_Config.MySQL.User);
+	LOG("MySQL database:                   \"%s\"", g_Config.MySQL.Database);
+	LOG("MySQL TLS:                        %s",     g_Config.MySQL.TLS ? "true" : "false");
+	LOG("MySQL max cached statements:      %d",     g_Config.MySQL.MaxCachedStatements);
+#endif
+	LOG("Query manager port:               %d",     g_Config.QueryManagerPort);
+	LOG("Query worker threads:             %d",     g_Config.QueryWorkerThreads);
+	LOG("Query buffer size:                %d",     g_Config.QueryBufferSize);
+	LOG("Query max attempts:               %d",     g_Config.QueryMaxAttempts);
+	LOG("Max connections:                  %d",     g_Config.MaxConnections);
+	LOG("Max connection idle time:         %dms",   g_Config.MaxConnectionIdleTime);
 
 	if(!CheckSHA256()){
 		return EXIT_FAILURE;

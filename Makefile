@@ -23,11 +23,17 @@ endif
 DATABASE ?= sqlite
 ifeq ($(DATABASE), sqlite)
   DATABASEOBJ = $(BUILDDIR)/database_sqlite.obj $(BUILDDIR)/sqlite3.obj
+  CFLAGS += -DDATABASE_SQLITE=1
 else ifeq ($(DATABASE), postgres)
-  DATABASEOBJ = $(BUILDDIR)/database_pq.obj
+  DATABASEOBJ = $(BUILDDIR)/database_postgres.obj
+  CFLAGS += -DDATABASE_POSTGRESQL=1
   LFLAGS += -lpq
+else ifeq ($(DATABASE), mariadb)
+  DATABASEOBJ = $(BUILDDIR)/database_mysql.obj
+  CFLAGS += -DDATABASE_MYSQL=1 -DDATABASE_MARIADB=1
+  LFLAGS += -lmariadb
 else
-  $(error Unsupported DATABASE: `$(DATABASE)`. Valid options are `sqlite` or `postgres`)
+  $(error Unsupported DATABASE: `$(DATABASE)`. Valid options are `sqlite`, `postgres`, or `mariadb`)
 endif
 
 $(BUILDDIR)/$(OUTPUTEXE): $(BUILDDIR)/connections.obj $(BUILDDIR)/hostcache.obj $(BUILDDIR)/query.obj $(BUILDDIR)/querymanager.obj $(BUILDDIR)/sha256.obj $(DATABASEOBJ)
@@ -58,7 +64,11 @@ $(BUILDDIR)/database_sqlite.obj: $(SRCDIR)/database_sqlite.cc $(SRCDIR)/queryman
 	@mkdir -p $(@D)
 	$(CXX) -c $(CXXFLAGS) -o $@ $<
 
-$(BUILDDIR)/database_pq.obj: $(SRCDIR)/database_pq.cc $(SRCDIR)/querymanager.hh
+$(BUILDDIR)/database_postgres.obj: $(SRCDIR)/database_postgres.cc $(SRCDIR)/querymanager.hh
+	@mkdir -p $(@D)
+	$(CXX) -c $(CXXFLAGS) -o $@ $<
+
+$(BUILDDIR)/database_mysql.obj: $(SRCDIR)/database_mysql.cc $(SRCDIR)/querymanager.hh
 	@mkdir -p $(@D)
 	$(CXX) -c $(CXXFLAGS) -o $@ $<
 
