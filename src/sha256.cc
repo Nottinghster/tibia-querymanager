@@ -166,46 +166,6 @@ bool GenerateAuth(const char *Password, uint8 *Auth, int AuthSize){
 
 // CheckSHA256
 //==============================================================================
-static int HexDigit(int Ch){
-	if(Ch >= '0' && Ch <= '9'){
-		return (Ch - '0');
-	}else if(Ch >= 'A' && Ch <= 'F'){
-		return (Ch - 'A') + 10;
-	}else if(Ch >= 'a' && Ch <= 'f'){
-		return (Ch - 'a') + 10;
-	}else{
-		return -1;
-	}
-}
-
-static int ParseHexString(uint8 *Buffer, int BufferSize, const char *String){
-	int StringLen = (int)strlen(String);
-	if(StringLen % 2 != 0){
-		LOG_ERR("Expected even number of characters");
-		return -1;
-	}
-
-	int NumBytes = (StringLen / 2);
-	if(NumBytes > BufferSize){
-		LOG_ERR("Supplied buffer is too small (Size: %d, Required: %d)",
-				BufferSize, NumBytes);
-		return -1;
-	}
-
-	for(int i = 0; i < NumBytes; i += 1){
-		int Digit0 = HexDigit(String[i * 2 + 0]);
-		int Digit1 = HexDigit(String[i * 2 + 1]);
-		if(Digit0 == -1 || Digit1 == -1){
-			LOG_ERR("Invalid hex digit at offset %d", i * 2);
-			return -1;
-		}
-
-		Buffer[i] = ((uint8)Digit0 << 4) | (uint8)Digit1;
-	}
-
-	return NumBytes;
-}
-
 bool CheckSHA256(void){
 	// NOTE(fusion): We're using only a few NIST test vectors. This is to make
 	// sure there are no blatant implementation errors but we'd ideally run it
@@ -246,8 +206,8 @@ bool CheckSHA256(void){
 	uint8 Expected[32];
 	uint8 Digest[32];
 	for(int i = 0; i < NARRAY(Tests); i += 1){
-		int InputBytes = ParseHexString(Input, sizeof(Input), Tests[i].Input);
-		int ExpectedBytes = ParseHexString(Expected, sizeof(Expected), Tests[i].Expected);
+		int InputBytes = ParseHexStringBuf(Input, Tests[i].Input);
+		int ExpectedBytes = ParseHexStringBuf(Expected, Tests[i].Expected);
 		if(InputBytes == -1 || ExpectedBytes != sizeof(Expected)){
 			LOG_ERR("Invalid test vector %d", i);
 			return false;

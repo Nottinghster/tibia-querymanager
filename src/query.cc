@@ -545,7 +545,7 @@ void ProcessCheckAccountPassword(TDatabase *Database, TQuery *Query){
 	Request.ReadString(IPString, sizeof(IPString));
 
 	int IPAddress = 0;
-	QUERY_FAIL_IF(!ParseIPAddress(IPString, &IPAddress));
+	QUERY_FAIL_IF(!ParseIPAddress(&IPAddress, IPString));
 
 	// NOTE(fusion): Same as `ProcessLoginGame`.
 	CheckAccountPasswordTx(Database, Query, AccountID, Password, IPAddress);
@@ -604,7 +604,7 @@ void ProcessLoginAccount(TDatabase *Database, TQuery *Query){
 	Request.ReadString(IPString, sizeof(IPString));
 
 	int IPAddress = 0;
-	QUERY_FAIL_IF(!ParseIPAddress(IPString, &IPAddress));
+	QUERY_FAIL_IF(!ParseIPAddress(&IPAddress, IPString));
 
 	// NOTE(fusion): Same as `ProcessLoginGame`.
 	LoginAccountTx(Database, Query, AccountID, Password, IPAddress);
@@ -732,7 +732,7 @@ void ProcessLoginGame(TDatabase *Database, TQuery *Query){
 	bool GamemasterRequired = Request.ReadFlag();
 
 	int IPAddress;
-	QUERY_FAIL_IF(!ParseIPAddress(IPString, &IPAddress));
+	QUERY_FAIL_IF(!ParseIPAddress(&IPAddress, IPString));
 
 	// IMPORTANT(fusion): We need to insert login attempts outside the login game
 	// transaction or we could end up not having it recorded at all due to rollbacks.
@@ -778,7 +778,7 @@ void ProcessSetNamelock(TDatabase *Database, TQuery *Query){
 	Request.ReadString(Comment, sizeof(Comment));
 
 	int IPAddress = 0;
-	QUERY_FAIL_IF(!StringEmpty(IPString) && !ParseIPAddress(IPString, &IPAddress));
+	QUERY_FAIL_IF(!StringEmpty(IPString) && !ParseIPAddress(&IPAddress, IPString));
 
 	TransactionScope Tx("SetNamelock");
 	QUERY_STOP_IF(!Tx.Begin(Database));
@@ -816,7 +816,7 @@ void ProcessBanishAccount(TDatabase *Database, TQuery *Query){
 	bool FinalWarning = Request.ReadFlag();
 
 	int IPAddress = 0;
-	QUERY_FAIL_IF(!StringEmpty(IPString) && !ParseIPAddress(IPString, &IPAddress));
+	QUERY_FAIL_IF(!StringEmpty(IPString) && !ParseIPAddress(&IPAddress, IPString));
 
 	TransactionScope Tx("BanishAccount");
 	QUERY_STOP_IF(!Tx.Begin(Database));
@@ -863,7 +863,7 @@ void ProcessSetNotation(TDatabase *Database, TQuery *Query){
 	Request.ReadString(Comment, sizeof(Comment));
 
 	int IPAddress = 0;
-	QUERY_FAIL_IF(!StringEmpty(IPString) && !ParseIPAddress(IPString, &IPAddress));
+	QUERY_FAIL_IF(!StringEmpty(IPString) && !ParseIPAddress(&IPAddress, IPString));
 
 	TransactionScope Tx("SetNotation");
 	QUERY_STOP_IF(!Tx.Begin(Database));
@@ -987,7 +987,7 @@ void ProcessBanishIpAddress(TDatabase *Database, TQuery *Query){
 	Request.ReadString(Comment, sizeof(Comment));
 
 	int IPAddress;
-	QUERY_FAIL_IF(!ParseIPAddress(IPString, &IPAddress));
+	QUERY_FAIL_IF(!ParseIPAddress(&IPAddress, IPString));
 
 	TransactionScope Tx("BanishIP");
 	QUERY_STOP_IF(!Tx.Begin(Database));

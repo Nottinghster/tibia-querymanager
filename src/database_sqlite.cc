@@ -35,7 +35,7 @@ public:
 	}
 
 	~AutoStmtReset(void){
-		if(m_Stmt){
+		if(m_Stmt != NULL){
 			sqlite3_reset(m_Stmt);
 			m_Stmt = NULL;
 		}
@@ -190,6 +190,7 @@ static bool ExecFile(TDatabase *Database, const char *FileName){
 	return Result;
 }
 
+static bool ExecInternal(TDatabase *Database, const char *Format, ...) ATTR_PRINTF(2, 3);
 static bool ExecInternal(TDatabase *Database, const char *Format, ...){
 	va_list ap;
 	va_start(ap, Format);
@@ -434,7 +435,6 @@ bool TransactionScope::Commit(void){
 		return false;
 	}
 
-	// TODO(fusion): Does the transaction automatically rollback if commiting fails?
 	if(!ExecInternal(m_Database, "COMMIT")){
 		LOG_ERR("Failed to commit transaction (%s)", m_Context);
 		return false;

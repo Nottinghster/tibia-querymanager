@@ -14,6 +14,7 @@
 #include <algorithm>
 
 typedef uint8_t uint8;
+typedef int16_t int16;
 typedef uint16_t uint16;
 typedef uint32_t uint32;
 typedef int64_t int64;
@@ -103,7 +104,7 @@ struct TConfig{
 #elif DATABASE_POSTGRESQL
 	struct{
 		// NOTE(fusion): Most of these are stored as strings because that is the
-		// format the connector expects for connect parameters.
+		// format libpq expects for connection parameters.
 		char Host[100];
 		char Port[30];
 		char DBName[30];
@@ -159,12 +160,14 @@ bool StringCopy(char *Dest, int DestCapacity, const char *Src);
 void StringCopyEllipsis(char *Dest, int DestCapacity, const char *Src);
 bool StringFormat(char *Dest, int DestCapacity, const char *Format, ...) ATTR_PRINTF(3, 4);
 uint32 HashString(const char *String);
-bool ParseIPAddress(const char *String, int *OutAddr);
 
-bool ReadBooleanConfig(bool *Dest, const char *Val);
-bool ReadIntegerConfig(int *Dest, const char *Val);
-bool ReadSizeConfig(int *Dest, const char *Val);
-bool ReadStringConfig(char *Dest, int DestCapacity, const char *Val);
+int HexDigit(int Ch);
+int ParseHexString(uint8 *Dest, int DestCapacity, const char *String);
+bool ParseIPAddress(int *Dest, const char *String);
+bool ParseBoolean(bool *Dest, const char *String);
+bool ParseInteger(int *Dest, const char *String);
+bool ParseSize(int *Dest, const char *String);
+bool ParseString(char *Dest, int DestCapacity, const char *String);
 bool ReadConfig(const char *FileName, TConfig *Config);
 
 // IMPORTANT(fusion): These macros should only be used when `Dest` is a char array
@@ -174,7 +177,8 @@ bool ReadConfig(const char *FileName, TConfig *Config);
 #define StringBufCopyEllipsis(Dest, Src)     StringCopyEllipsis(Dest, sizeof(Dest), Src);
 #define StringBufCopy(Dest, Src)             StringCopy(Dest, sizeof(Dest), Src)
 #define StringBufCopyN(Dest, Src, SrcLength) StringCopyN(Dest, sizeof(Dest), Src, SrcLength)
-#define ReadStringBufConfig(Dest, Val)       ReadStringConfig(Dest, sizeof(Dest), Val)
+#define ParseStringBuf(Dest, String)         ParseString(Dest, sizeof(Dest), String)
+#define ParseHexStringBuf(Dest, String)      ParseHexString(Dest, sizeof(Dest), String);
 
 // AtomicInt
 //==============================================================================
@@ -794,13 +798,9 @@ struct TOnlineCharacter{
 	char Profession[30];
 };
 
-// NOTE(fusion): Database Management
+// NOTE(fusion): The database struct is OPAQUE and dependent on the current
+// active database driver.
 struct TDatabase;
-void DatabaseClose(TDatabase *Database);
-TDatabase *DatabaseOpen(void);
-int DatabaseChanges(TDatabase *Database);
-bool DatabaseCheckpoint(TDatabase *Database);
-int DatabaseMaxConcurrency(void);
 
 // NOTE(fusion): TransactionScope
 struct TransactionScope{
@@ -814,6 +814,13 @@ public:
 	bool Begin(TDatabase *Database);
 	bool Commit(void);
 };
+
+// NOTE(fusion): Database Management
+void DatabaseClose(TDatabase *Database);
+TDatabase *DatabaseOpen(void);
+int DatabaseChanges(TDatabase *Database);
+bool DatabaseCheckpoint(TDatabase *Database);
+int DatabaseMaxConcurrency(void);
 
 // NOTE(fusion): Primary Tables
 bool GetWorldID(TDatabase *Database, const char *World, int *WorldID);

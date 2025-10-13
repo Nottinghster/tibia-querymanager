@@ -2,6 +2,12 @@
 #include "querymanager.hh"
 #include "libpq-fe.h"
 
+// IMPORTANT(fusion): With PostgreSQL being a distributed database, we cannot
+// rely on automatic schema upgrades like in the case of SQLite. It must be
+// managed manually and there must be an agreement on the current version
+// which is why there is a `SchemaInfo` table.
+#define POSTGRESQL_SCHEMA_VERSION 1
+
 // IMPORTANT(fusion): These are the OIDs for a few of built-in data types in
 // PostgreSQL. They're taken from `catalog/pg_type_d.h` which is not included
 // with libpq but should be STABLE across different versions and are needed
@@ -37,6 +43,244 @@ struct TDatabase{
 	TCachedStatement *CachedStatements;
 };
 
+// Internal Helpers
+//==============================================================================
+struct AutoResultClear{
+private:
+	PGresult *m_Result;
+
+public:
+	AutoResultClear(PGresult *Result){
+		m_Result = Result;
+	}
+
+	~AutoResultClear(void){
+		if(m_Result != NULL){
+			PQclear(m_Result);
+			m_Result = NULL;
+		}
+	}
+};
+
+static bool GetResultBool(PGresult *Result, int Row, int Col){
+	bool Value = false;
+	int Format = PQfformat(Result, Col);
+	Oid Type = PQftype(Result, Col);
+	if(Format == 0){       // TEXT FORMAT
+		if(!ParseBoolean(&Value, PQgetvalue(Result, Row, Col))){
+			LOG_ERR("Failed to properly parse column (%d) %s as BOOLEAN",
+					Col, PQfname(Result, Col));
+		}
+	}else if(Format == 1){ // BINARY FORMAT
+		switch(Type){
+			case BOOLOID:{
+				ASSERT(PQgetlength(Result, Row, Col) == 1);
+				Value = (BufferRead8((const uint8*)PQgetvalue(Result, Row, Col)) != 0);
+				break;
+			}
+
+			case INT8OID:{
+				ASSERT(PQgetlength(Result, Row, Col) == 8);
+				Value = (BufferRead64BE((const uint8*)PQgetvalue(Result, Row, Col)) != 0);
+				break;
+			}
+
+			case INT2OID:{
+				ASSERT(PQgetlength(Result, Row, Col) == 2);
+				Value = (BufferRead16BE((const uint8*)PQgetvalue(Result, Row, Col)) != 0);
+				break;
+			}
+
+			case INT4OID:{
+				ASSERT(PQgetlength(Result, Row, Col) == 4);
+				Value = (BufferRead32BE((const uint8*)PQgetvalue(Result, Row, Col)) != 0);
+				break;
+			}
+
+			case TEXTOID:
+			case VARCHAROID:{
+				if(!ParseBoolean(&Value, PQgetvalue(Result, Row, Col))){
+					LOG_WARN("Failed to properly convert column (%d) %s from TEXT to BOOLEAN",
+							Col, PQfname(Result, Col));
+				}
+				break;
+			}
+
+			default:{
+				LOG_ERR("Column (%d) %s has OID %d which is not convertible to BOOLEAN",
+						Col, PQfname(Result, Col), Type);
+				break;
+			}
+		}
+	}
+	return Value;
+}
+
+static int GetResultInt(PGresult *Result, int Row, int Col){
+	int Value = 0;
+	int Format = PQfformat(Result, Col);
+	Oid Type = PQftype(Result, Col);
+	ASSERT(Format == 0 || Format == 1);
+	if(Format == 0){       // TEXT FORMAT
+		if(!ParseInteger(&Value, PQgetvalue(Result, Row, Col))){
+			LOG_ERR("Failed to properly parse column (%d) %s as INT4",
+					Col, PQfname(Result, Col));
+		}
+	}else if(Format == 1){ // BINARY FORMAT
+		switch(Type){
+			case BOOLOID:{
+				ASSERT(PQgetlength(Result, Row, Col) == 1);
+				Value = BufferRead8((const uint8*)PQgetvalue(Result, Row, Col));
+				break;
+			}
+
+			case INT8OID:{
+				ASSERT(PQgetlength(Result, Row, Col) == 8);
+				int64 Temp = (int64)BufferRead64BE((const uint8*)PQgetvalue(Result, Row, Col));
+				if(Temp < INT_MIN || Temp > INT_MAX){
+					LOG_WARN("Lossy conversion of column (%d) %s from INT8 to INT4",
+							Col, PQfname(Result, Col));
+				}
+
+				Value = (int)Temp;
+				break;
+			}
+
+			case INT2OID:{
+				ASSERT(PQgetlength(Result, Row, Col) == 2);
+				Value = (int16)BufferRead16BE((const uint8*)PQgetvalue(Result, Row, Col));
+				break;
+			}
+
+			case INT4OID:{
+				ASSERT(PQgetlength(Result, Row, Col) == 4);
+				Value = (int)BufferRead32BE((const uint8*)PQgetvalue(Result, Row, Col));
+				break;
+			}
+
+			case TEXTOID:
+			case VARCHAROID:{
+				if(!ParseInteger(&Value, PQgetvalue(Result, Row, Col))){
+					LOG_WARN("Failed to properly convert column (%d) %s from TEXT to INT4",
+							Col, PQfname(Result, Col));
+				}
+				break;
+			}
+
+			default:{
+				LOG_ERR("Column (%d) %s has OID %d which is not convertible to INT4",
+						Col, PQfname(Result, Col), Type);
+				break;
+			}
+		}
+	}
+	return Value;
+}
+
+static const char *GetResultText(PGresult *Result, int Row, int Col){
+	const char *Text = "";
+	int Format = PQfformat(Result, Col);
+	Oid Type = PQftype(Result, Col);
+	ASSERT(Format == 0 || Format == 1);
+	if(Format == 0){       // TEXT FORMAT
+		Text = PQgetvalue(Result, Row, Col);
+	}else if(Format == 1){ // BINARY FORMAT
+		switch(Type){
+			case TEXTOID:
+			case VARCHAROID:{
+				Text = PQgetvalue(Result, Row, Col);
+				break;
+			}
+
+			default:{
+				// IMPORTANT(fusion): There is no trivial way to convert whatever
+				// value we received back to string. We'd either need to allocate
+				// or modify the prototype of this function to accept an output
+				// buffer.
+				//  The fact is, we shouldn't expect implicit conversions to work
+				// when using the binary format, PERIOD.
+				LOG_ERR("Column (%d) %s has OID %d which is not trivially convertible to TEXT",
+						Col, PQfname(Result, Col), Type);
+				break;
+			}
+		}
+	}
+	return Text;
+}
+
+static int GetResultByteA(PGresult *Result, int Row, int Col, uint8 *Buffer, int BufferSize){
+	int Size = 0;
+	int Format = PQfformat(Result, Col);
+	ASSERT(Format == 0 || Format == 1);
+	if(Format == 0){       // TEXT FORMAT
+		const char *String = PQgetvalue(Result, Row, Col);
+		if(String[0] != '\\' && String[1] != 'x'){
+			LOG_ERR("Column (%d) %s (OID %d) doesn't contain a valid BYTEA literal",
+					Col, PQfname(Result, Col), PQftype(Result, Col));
+			return -1;
+		}
+
+		Size = ParseHexString(Buffer, BufferSize, String + 2);
+		if(Size == -1){
+			return -1;
+		}
+	}else if(Format == 1){ // BINARY FORMAT
+		Size = PQgetlength(Result, Row, Col);
+		if(Size > BufferSize){
+			return -1;
+		}
+		memcpy(Buffer, PQgetvalue(Result, Row, Col), Size);
+	}
+
+	ASSERT(Size <= BufferSize);
+	return Size;
+}
+
+static bool ExecInternal(TDatabase *Database, const char *Format, ...) ATTR_PRINTF(2, 3);
+static bool ExecInternal(TDatabase *Database, const char *Format, ...){
+	va_list ap;
+	va_start(ap, Format);
+	char Text[1024];
+	int Written = vsnprintf(Text, sizeof(Text), Format, ap);
+	va_end(ap);
+
+	if(Written >= (int)sizeof(Text)){
+		LOG_ERR("Query is too long");
+		return false;
+	}
+
+	PGresult *Result = PQexec(Database->Handle, Text);
+	AutoResultClear ResultGuard(Result);
+	bool Status = PQresultStatus(Result) == PGRES_COMMAND_OK
+			|| PQresultStatus(Result) == PGRES_TUPLES_OK;
+	if(!Status){
+		char Preview[30];
+		StringBufCopyEllipsis(Preview, Text);
+		LOG_ERR("Failed to execute query \"%s\": %s",
+				Preview, PQerrorMessage(Database->Handle));
+	}
+	return Status;
+}
+
+static bool GetSchemaVersion(TDatabase *Database, int *Version){
+	PGresult *Result = PQexec(Database->Handle,
+			"SELECT Value FROM SchemaInfo WHERE Key = 'VERSION'");
+	AutoResultClear ResultGuard(Result);
+	if(PQresultStatus(Result) != PGRES_TUPLES_OK){
+		LOG_ERR("Failed to execute query: %s",
+				PQerrorMessage(Database->Handle));
+		return false;
+	}
+
+	if(PQntuples(Result) == 0){
+		LOG_ERR("Query returned no rows");
+		return false;
+	}
+
+	*Version = GetResultInt(Result, 0, 0);
+	return true;
+}
+
 // Statement Cache
 //==============================================================================
 // NOTE(fusion): Prepared statements are stored server-side and only referenced
@@ -71,10 +315,6 @@ void DeleteStatementCache(TDatabase *Database){
 		ASSERT(Database->MaxCachedStatements > 0);
 		for(int i = 0; i < Database->MaxCachedStatements; i += 1){
 			TCachedStatement *Entry = &Database->CachedStatements[i];
-			// NOTE(fusion): There is little reason to use `PQclosePrepared` here
-			// because this function would usually be called with `PQreset` or
-			// `PQfinish` which should already clear any prepared statements
-			// created for the session.
 			if(Entry->Text != NULL){
 				free(Entry->Text);
 				Entry->LastUsed = 0;
@@ -83,9 +323,15 @@ void DeleteStatementCache(TDatabase *Database){
 			}
 		}
 
-		// TODO(fusion): We might not need to use `PQclosePrepared` but it could
-		// be a good idea to do some ExecInternal("DEALLOCATE ALL"), which would
-		// clear all prepared statements from the current session.
+		// NOTE(fusion): This function would usually be called along with `PQreset`
+		// or `PQfinish` but it's probably a good idea to close all prepared statements
+		// if the connection is still going. There is no libpq wrapper but we can
+		// execute `DEALLOCATE ALL`.
+		if(PQstatus(Database->Handle) == CONNECTION_OK){
+			if(!ExecInternal(Database, "DEALLOCATE ALL")){
+				LOG_WARN("Failed to close all prepared statements");
+			}
+		}
 
 		free(Database->CachedStatements);
 		Database->MaxCachedStatements = 0;
@@ -128,27 +374,26 @@ const char *PrepareQuery(TDatabase *Database, const char *Text){
 
 		if(Stmt->Text != NULL){
 			PGresult *Result = PQclosePrepared(Database->Handle, Stmt->Name);
+			AutoResultClear ResultGuard(Result);
 			if(PQresultStatus(Result) != PGRES_COMMAND_OK){
 				char OldPreview[30];
 				StringBufCopyEllipsis(OldPreview, Stmt->Text);
 				LOG_ERR("Failed to close prepared query \"%s\": %s",
 						OldPreview, PQerrorMessage(Database->Handle));
 			}
-			PQclear(Result);
 			free(Stmt->Text);
 		}
 
 		{
 			PGresult *Result = PQprepare(Database->Handle, Stmt->Name, Text, 0, NULL);
+			AutoResultClear ResultGuard(Result);
 			if(PQresultStatus(Result) != PGRES_COMMAND_OK){
 				char NewPreview[30];
 				StringBufCopyEllipsis(NewPreview, Text);
 				LOG_ERR("Failed to prepare query \"%s\": %s",
 						NewPreview, PQerrorMessage(Database->Handle));
-				PQclear(Result);
 				return NULL;
 			}
-			PQclear(Result);
 		}
 
 
@@ -164,6 +409,7 @@ const char *PrepareQuery(TDatabase *Database, const char *Text){
 			LOG("New statement cached: \"%s\"", Preview);
 
 			PGresult *Result = PQdescribePrepared(Database->Handle, Stmt->Name);
+			AutoResultClear ResultGuard(Result);
 			if(PQresultStatus(Result) == PGRES_COMMAND_OK){
 				LOG("  PARAM OIDs:");
 				for(int i = 0; i < PQnparams(Result); i += 1){
@@ -175,12 +421,58 @@ const char *PrepareQuery(TDatabase *Database, const char *Text){
 					LOG("    (%d) %s: %d", i, PQfname(Result, i), PQftype(Result, i));
 				}
 			}
-			PQclear(Result);
 		}
 #endif
 	}
 
 	return Stmt->Name;
+}
+
+// TransactionScope
+//==============================================================================
+TransactionScope::TransactionScope(const char *Context){
+	m_Context = (Context != NULL ? Context : "NOCONTEXT");
+	m_Database = NULL;
+}
+
+TransactionScope::~TransactionScope(void){
+	if(m_Database != NULL){
+		if(!ExecInternal(m_Database, "ROLLBACK")){
+			LOG_ERR("Failed to rollback transaction (%s)", m_Context);
+		}
+
+		m_Database = NULL;
+	}
+}
+
+bool TransactionScope::Begin(TDatabase *Database){
+	if(m_Database != NULL){
+		LOG_ERR("Transaction (%s) already running", m_Context);
+		return false;
+	}
+
+	if(!ExecInternal(Database, "BEGIN")){
+		LOG_ERR("Failed to begin transaction (%s)", m_Context);
+		return false;
+	}
+
+	m_Database = Database;
+	return true;
+}
+
+bool TransactionScope::Commit(void){
+	if(m_Database == NULL){
+		LOG_ERR("Transaction (%s) not running", m_Context);
+		return false;
+	}
+
+	if(!ExecInternal(m_Database, "COMMIT")){
+		LOG_ERR("Failed to commit transaction (%s)", m_Context);
+		return false;
+	}
+
+	m_Database = NULL;
+	return true;
 }
 
 // Database Management
@@ -239,51 +531,20 @@ TDatabase *DatabaseOpen(void){
 		return NULL;
 	}
 
-//=====
-	// TODO(fusion): REMOVE.
-	{
-		const char *Stmt = PrepareQuery(Database,
-				"SELECT Value::INTEGER FROM SchemaInfo WHERE Key = $1::TEXT");
-		if(Stmt == NULL){
-			LOG_ERR("Failed to prepare query");
-			DatabaseClose(Database);
-			return NULL;
-		}
-
-		const char *ParamValues[] = { "VERSION" };
-		PGresult *Result = PQexecPrepared(Database->Handle, Stmt, 1, ParamValues, NULL, NULL, 1);
-		if(PQresultStatus(Result) != PGRES_TUPLES_OK){
-			LOG_ERR("Failed to execute query: %s", PQerrorMessage(Database->Handle));
-			PQclear(Result);
-			DatabaseClose(Database);
-			return NULL;
-		}
-
-		LOG("VERSION: %d", BufferRead32BE((const uint8*)PQgetvalue(Result, 0, 0)));
-		PQclear(Result);
-	}
-
-	const char *Stmt = PrepareQuery(Database, "SELECT Value FROM SchemaInfo WHERE Key = 'VERSION'");
-	if(Stmt == NULL){
-		LOG_ERR("Failed to prepare query");
+	int SchemaVersion;
+	if(!GetSchemaVersion(Database, &SchemaVersion)){
+		LOG_ERR("Failed to retrieve schema version..."
+				" Database schema may not have been initialized");
 		DatabaseClose(Database);
 		return NULL;
 	}
 
-	int i = 0;
-	do{
-		PGresult *Result = PQexecPrepared(Database->Handle, Stmt, 0, NULL, NULL, NULL, 1);
-		if(PQresultStatus(Result) != PGRES_TUPLES_OK){
-			LOG_ERR("Failed to execute query: %s", PQerrorMessage(Database->Handle));
-			PQclear(Result);
-			DatabaseClose(Database);
-			return NULL;
-		}
-		LOG("VERSION: OID = %u, LEN = %d", PQftype(Result, 0), PQgetlength(Result, 0, 0));
-		PQclear(Result);
-		//PQreset(Database->Handle);
-	}while(i++ < 2);
-//=====
+	if(SchemaVersion != POSTGRESQL_SCHEMA_VERSION){
+		LOG_ERR("Schema version MISMATCH (expected %d, got %d)",
+				POSTGRESQL_SCHEMA_VERSION, SchemaVersion);
+		DatabaseClose(Database);
+		return NULL;
+	}
 
 	return Database;
 }
@@ -309,35 +570,35 @@ int DatabaseMaxConcurrency(void){
 	return INT_MAX;
 }
 
-// TransactionScope
-//==============================================================================
-TransactionScope::TransactionScope(const char *Context){
-	m_Context = (Context != NULL ? Context : "NOCONTEXT");
-	m_Database = NULL;
-}
-
-TransactionScope::~TransactionScope(void){
-	// TODO
-}
-
-bool TransactionScope::Begin(TDatabase *Database){
-	// TODO
-	return false;
-}
-
-bool TransactionScope::Commit(void){
-	// TODO
-	return false;
-}
-
 // Primary Tables
 //==============================================================================
 bool GetWorldID(TDatabase *Database, const char *World, int *WorldID){
-//	const Oid ParamTypes[] = { TEXTOID };
 	const char *Stmt = PrepareQuery(Database,
 			"SELECT WorldID FROM Worlds WHERE Name = $1::TEXT");
-//
-	return false;
+	if(Stmt == NULL){
+		LOG_ERR("Failed to prepare query");
+		return false;
+	}
+
+	//	TODO(fusion): In this specific case it doesn't make a difference but
+	// we'll probably need some helper struct to organize query parameters.
+	// It would have an internal buffer which would be used as an arena.
+	//PGParams Params(1);
+	//Params.PushText(World);
+	//Params.PushX(...); // PANIC: Too many parameters pushed...
+	//PGResult *Result = PQexecPrepared(Database->Handle, Stmt, Params.Count,
+	//		Params.Values, Params.Lengths, Params.Formats, 1);
+
+	const char *ParamValues[] = {World};
+	PGresult *Result = PQexecPrepared(Database->Handle, Stmt, 1, ParamValues, NULL, NULL, 1);
+	AutoResultClear ResultGuard(Result);
+	if(PQresultStatus(Result) != PGRES_TUPLES_OK){
+		LOG_ERR("Failed to execute query: %s", PQerrorMessage(Database->Handle));
+		return false;
+	}
+
+	*WorldID = (PQntuples(Result) > 0 ? GetResultInt(Result, 0, 0) : 0);
+	return true;
 }
 
 bool GetWorlds(TDatabase *Database, DynamicArray<TWorld> *Worlds){

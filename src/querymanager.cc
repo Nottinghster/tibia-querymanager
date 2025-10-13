@@ -209,7 +209,47 @@ uint32 HashString(const char *String){
 	return Hash;
 }
 
-bool ParseIPAddress(const char *String, int *OutAddr){
+int HexDigit(int Ch){
+	if(Ch >= '0' && Ch <= '9'){
+		return (Ch - '0');
+	}else if(Ch >= 'A' && Ch <= 'F'){
+		return (Ch - 'A') + 10;
+	}else if(Ch >= 'a' && Ch <= 'f'){
+		return (Ch - 'a') + 10;
+	}else{
+		return -1;
+	}
+}
+
+int ParseHexString(uint8 *Dest, int DestCapacity, const char *String){
+	int StringLen = (int)strlen(String);
+	if(StringLen % 2 != 0){
+		LOG_ERR("Expected even number of characters");
+		return -1;
+	}
+
+	int NumBytes = (StringLen / 2);
+	if(NumBytes > DestCapacity){
+		LOG_ERR("Supplied buffer is too small (Size: %d, Required: %d)",
+				DestCapacity, NumBytes);
+		return -1;
+	}
+
+	for(int i = 0; i < StringLen; i += 2){
+		int DigitHi = HexDigit(String[i + 0]);
+		int DigitLo = HexDigit(String[i + 1]);
+		if(DigitHi == -1 || DigitLo == -1){
+			LOG_ERR("Invalid hex digit at offset %d", i);
+			return -1;
+		}
+
+		Dest[i/2] = ((uint8)DigitHi << 4) | (uint8)DigitLo;
+	}
+
+	return NumBytes;
+}
+
+bool ParseIPAddress(int *Dest, const char *String){
 	if(StringEmpty(String)){
 		LOG_ERR("Empty IP Address");
 		return false;
@@ -229,8 +269,8 @@ bool ParseIPAddress(const char *String, int *OutAddr){
 		return false;
 	}
 
-	if(OutAddr){
-		*OutAddr = ((int)Addr[0] << 24)
+	if(Dest){
+		*Dest = ((int)Addr[0] << 24)
 				| ((int)Addr[1] << 16)
 				| ((int)Addr[2] << 8)
 				| ((int)Addr[3] << 0);
@@ -239,24 +279,29 @@ bool ParseIPAddress(const char *String, int *OutAddr){
 	return true;
 }
 
-bool ReadBooleanConfig(bool *Dest, const char *Val){
-	ASSERT(Dest && Val);
-	*Dest = StringEqCI(Val, "true");
-	return *Dest || StringEqCI(Val, "false");
+bool ParseBoolean(bool *Dest, const char *String){
+	ASSERT(Dest && String);
+	*Dest = StringEqCI(String, "true")
+			|| StringEqCI(String, "on")
+			|| StringEqCI(String, "yes");
+	return *Dest
+			|| StringEqCI(String, "false")
+			|| StringEqCI(String, "off")
+			|| StringEqCI(String, "no");
 }
 
-bool ReadIntegerConfig(int *Dest, const char *Val){
-	ASSERT(Dest && Val);
-	const char *ValEnd;
-	*Dest = (int)strtol(Val, (char**)&ValEnd, 0);
-	return ValEnd > Val;
+bool ParseInteger(int *Dest, const char *String){
+	ASSERT(Dest && String);
+	const char *StringEnd;
+	*Dest = (int)strtol(String, (char**)&StringEnd, 0);
+	return StringEnd > String;
 }
 
-bool ReadDurationConfig(int *Dest, const char *Val){
-	ASSERT(Dest && Val);
+bool ParseDuration(int *Dest, const char *String){
+	ASSERT(Dest && String);
 	const char *Suffix;
-	*Dest = (int)strtol(Val, (char**)&Suffix, 0);
-	if(Suffix == Val){
+	*Dest = (int)strtol(String, (char**)&Suffix, 0);
+	if(Suffix == String){
 		return false;
 	}
 
@@ -275,11 +320,11 @@ bool ReadDurationConfig(int *Dest, const char *Val){
 	return true;
 }
 
-bool ReadSizeConfig(int *Dest, const char *Val){
-	ASSERT(Dest && Val);
+bool ParseSize(int *Dest, const char *String){
+	ASSERT(Dest && String);
 	const char *Suffix;
-	*Dest = (int)strtol(Val, (char**)&Suffix, 0);
-	if(Suffix == Val){
+	*Dest = (int)strtol(String, (char**)&Suffix, 0);
+	if(Suffix == String){
 		return false;
 	}
 
@@ -296,21 +341,21 @@ bool ReadSizeConfig(int *Dest, const char *Val){
 	return true;
 }
 
-bool ReadStringConfig(char *Dest, int DestCapacity, const char *Val){
-	ASSERT(Dest && DestCapacity > 0 && Val);
-	int ValStart = 0;
-	int ValEnd = (int)strlen(Val);
-	if(ValEnd >= 2){
-		if((Val[0] == '"' && Val[ValEnd - 1] == '"')
-		|| (Val[0] == '\'' && Val[ValEnd - 1] == '\'')
-		|| (Val[0] == '`' && Val[ValEnd - 1] == '`')){
-			ValStart += 1;
-			ValEnd -= 1;
+bool ParseString(char *Dest, int DestCapacity, const char *String){
+	ASSERT(Dest && DestCapacity > 0 && String);
+	int StringStart = 0;
+	int StringEnd = (int)strlen(String);
+	if(StringEnd >= 2){
+		if((String[0] == '"' && String[StringEnd - 1] == '"')
+		|| (String[0] == '\'' && String[StringEnd - 1] == '\'')
+		|| (String[0] == '`' && String[StringEnd - 1] == '`')){
+			StringStart += 1;
+			StringEnd -= 1;
 		}
 	}
 
 	return StringCopyN(Dest, DestCapacity,
-			&Val[ValStart], (ValEnd - ValStart));
+			&String[StringStart], (StringEnd - StringStart));
 }
 
 bool ReadConfig(const char *FileName, TConfig *Config){
@@ -413,68 +458,68 @@ bool ReadConfig(const char *FileName, TConfig *Config){
 		}
 
 		if(StringEqCI(Key, "MaxCachedHostNames")){
-			ReadIntegerConfig(&Config->MaxCachedHostNames, Val);
+			ParseInteger(&Config->MaxCachedHostNames, Val);
 		}else if(StringEqCI(Key, "HostNameExpireTime")){
-			ReadDurationConfig(&Config->HostNameExpireTime, Val);
+			ParseDuration(&Config->HostNameExpireTime, Val);
 #if DATABASE_SQLITE
 		}else if(StringEqCI(Key, "SQLite.File")){
-			ReadStringBufConfig(Config->SQLite.File, Val);
+			ParseStringBuf(Config->SQLite.File, Val);
 		}else if(StringEqCI(Key, "SQLite.MaxCachedStatements")){
-			ReadIntegerConfig(&Config->SQLite.MaxCachedStatements, Val);
+			ParseInteger(&Config->SQLite.MaxCachedStatements, Val);
 #elif DATABASE_POSTGRESQL
 		}else if(StringEqCI(Key, "PostgreSQL.Host")){
-			ReadStringBufConfig(Config->PostgreSQL.Host, Val);
+			ParseStringBuf(Config->PostgreSQL.Host, Val);
 		}else if(StringEqCI(Key, "PostgreSQL.Port")){
-			ReadStringBufConfig(Config->PostgreSQL.Port, Val);
+			ParseStringBuf(Config->PostgreSQL.Port, Val);
 		}else if(StringEqCI(Key, "PostgreSQL.DBName")){
-			ReadStringBufConfig(Config->PostgreSQL.DBName, Val);
+			ParseStringBuf(Config->PostgreSQL.DBName, Val);
 		}else if(StringEqCI(Key, "PostgreSQL.User")){
-			ReadStringBufConfig(Config->PostgreSQL.User, Val);
+			ParseStringBuf(Config->PostgreSQL.User, Val);
 		}else if(StringEqCI(Key, "PostgreSQL.Password")){
-			ReadStringBufConfig(Config->PostgreSQL.Password, Val);
+			ParseStringBuf(Config->PostgreSQL.Password, Val);
 		}else if(StringEqCI(Key, "PostgreSQL.ConnectTimeout")){
-			ReadStringBufConfig(Config->PostgreSQL.ConnectTimeout, Val);
+			ParseStringBuf(Config->PostgreSQL.ConnectTimeout, Val);
 		}else if(StringEqCI(Key, "PostgreSQL.ClientEncoding")){
-			ReadStringBufConfig(Config->PostgreSQL.ClientEncoding, Val);
+			ParseStringBuf(Config->PostgreSQL.ClientEncoding, Val);
 		}else if(StringEqCI(Key, "PostgreSQL.ApplicationName")){
-			ReadStringBufConfig(Config->PostgreSQL.ApplicationName, Val);
+			ParseStringBuf(Config->PostgreSQL.ApplicationName, Val);
 		}else if(StringEqCI(Key, "PostgreSQL.SSLMode")){
-			ReadStringBufConfig(Config->PostgreSQL.SSLMode, Val);
+			ParseStringBuf(Config->PostgreSQL.SSLMode, Val);
 		}else if(StringEqCI(Key, "PostgreSQL.SSLRootCert")){
-			ReadStringBufConfig(Config->PostgreSQL.SSLRootCert, Val);
+			ParseStringBuf(Config->PostgreSQL.SSLRootCert, Val);
 		}else if(StringEqCI(Key, "PostgreSQL.MaxCachedStatements")){
-			ReadIntegerConfig(&Config->PostgreSQL.MaxCachedStatements, Val);
+			ParseInteger(&Config->PostgreSQL.MaxCachedStatements, Val);
 #elif DATABASE_MYSQL
 		}else if(StringEqCI(Key, "MySQL.Host")){
-			ReadStringBufConfig(Config->MySQL.Host, Val);
+			ParseStringBuf(Config->MySQL.Host, Val);
 		}else if(StringEqCI(Key, "MySQL.Port")){
-			ReadStringBufConfig(Config->MySQL.Port, Val);
+			ParseStringBuf(Config->MySQL.Port, Val);
 		}else if(StringEqCI(Key, "MySQL.DBName")){
-			ReadStringBufConfig(Config->MySQL.DBName, Val);
+			ParseStringBuf(Config->MySQL.DBName, Val);
 		}else if(StringEqCI(Key, "MySQL.User")){
-			ReadStringBufConfig(Config->MySQL.User, Val);
+			ParseStringBuf(Config->MySQL.User, Val);
 		}else if(StringEqCI(Key, "MySQL.Password")){
-			ReadStringBufConfig(Config->MySQL.Password, Val);
+			ParseStringBuf(Config->MySQL.Password, Val);
 		}else if(StringEqCI(Key, "MySQL.UnixSocket")){
-			ReadStringBufConfig(Config->MySQL.UnixSocket, Val);
+			ParseStringBuf(Config->MySQL.UnixSocket, Val);
 		}else if(StringEqCI(Key, "MySQL.MaxCachedStatements")){
-			ReadIntegerConfig(&Config->MySQL.MaxCachedStatements, Val);
+			ParseInteger(&Config->MySQL.MaxCachedStatements, Val);
 #endif
 		}else if(StringEqCI(Key, "QueryManagerPort")){
-			ReadIntegerConfig(&Config->QueryManagerPort, Val);
+			ParseInteger(&Config->QueryManagerPort, Val);
 		}else if(StringEqCI(Key, "QueryManagerPassword")){
-			ReadStringBufConfig(Config->QueryManagerPassword, Val);
+			ParseStringBuf(Config->QueryManagerPassword, Val);
 		}else if(StringEqCI(Key, "QueryWorkerThreads")){
-			ReadIntegerConfig(&Config->QueryWorkerThreads, Val);
+			ParseInteger(&Config->QueryWorkerThreads, Val);
 		}else if(StringEqCI(Key, "QueryBufferSize")
 				|| StringEqCI(Key, "MaxConnectionPacketSize")){
-			ReadSizeConfig(&Config->QueryBufferSize, Val);
+			ParseSize(&Config->QueryBufferSize, Val);
 		}else if(StringEqCI(Key, "QueryMaxAttempts")){
-			ReadIntegerConfig(&Config->QueryMaxAttempts, Val);
+			ParseInteger(&Config->QueryMaxAttempts, Val);
 		}else if(StringEqCI(Key, "MaxConnections")){
-			ReadIntegerConfig(&Config->MaxConnections, Val);
+			ParseInteger(&Config->MaxConnections, Val);
 		}else if(StringEqCI(Key, "MaxConnectionIdleTime")){
-			ReadDurationConfig(&Config->MaxConnectionIdleTime, Val);
+			ParseDuration(&Config->MaxConnectionIdleTime, Val);
 		}else{
 			LOG_WARN("Unknown config \"%s\"", Key);
 		}
