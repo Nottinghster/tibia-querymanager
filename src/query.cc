@@ -323,7 +323,8 @@ bool InitQuery(void){
 		}
 
 		if(NumWorkersDone > 0){
-			LOG_ERR("%d worker threads failed to initialize", NumWorkersDone);
+			LOG_ERR("%d worker thread%s failed to initialize",
+					NumWorkersDone, (NumWorkersDone == 1 ? "" : "s"));
 			return false;
 		}
 

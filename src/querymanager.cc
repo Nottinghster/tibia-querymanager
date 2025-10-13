@@ -9,8 +9,8 @@
 #	error "Operating system not currently supported."
 #endif
 
+int64     g_StartTimeMS    = 0;
 AtomicInt g_ShutdownSignal = {};
-int       g_StartTimeMS    = 0;
 TConfig   g_Config         = {};
 
 void LogAdd(const char *Prefix, const char *Format, ...){
@@ -20,7 +20,14 @@ void LogAdd(const char *Prefix, const char *Format, ...){
 	vsnprintf(Entry, sizeof(Entry), Format, ap);
 	va_end(ap);
 
-	if(!StringEmpty(Entry)){
+	// NOTE(fusion): Trim trailing whitespace.
+	int Length = (int)strlen(Entry);
+	while(Length > 0 && isspace(Entry[Length - 1])){
+		Entry[Length - 1] = 0;
+		Length -= 1;
+	}
+
+	if(Length > 0){
 		struct tm LocalTime = GetLocalTime(time(NULL));
 		fprintf(stdout, "%04d/%02d/%02d %02d:%02d:%02d [%s] %s\n",
 				LocalTime.tm_year + 1900, LocalTime.tm_mon + 1, LocalTime.tm_mday,
@@ -38,7 +45,14 @@ void LogAddVerbose(const char *Prefix, const char *Function,
 	vsnprintf(Entry, sizeof(Entry), Format, ap);
 	va_end(ap);
 
-	if(!StringEmpty(Entry)){
+	// NOTE(fusion): Trim trailing whitespace.
+	int Length = (int)strlen(Entry);
+	while(Length > 0 && isspace(Entry[Length - 1])){
+		Entry[Length - 1] = 0;
+		Length -= 1;
+	}
+
+	if(Length > 0){
 		(void)File;
 		(void)Line;
 		struct tm LocalTime = GetLocalTime(time(NULL));
@@ -158,6 +172,31 @@ bool StringCopy(char *Dest, int DestCapacity, const char *Src){
 	// is NULL.
 	int SrcLength = (Src != NULL ? (int)strlen(Src) : 0);
 	return StringCopyN(Dest, DestCapacity, Src, SrcLength);
+}
+
+void StringCopyEllipsis(char *Dest, int DestCapacity, const char *Src){
+	ASSERT(DestCapacity > 0);
+	int SrcLength = (Src != NULL ? (int)strlen(Src) : 0);
+	if(SrcLength < DestCapacity){
+		memcpy(Dest, Src, SrcLength);
+		Dest[SrcLength] = 0;
+	}else{
+		memcpy(Dest, Src, DestCapacity);
+		if(DestCapacity >= 4){
+			Dest[DestCapacity - 4] = '.';
+			Dest[DestCapacity - 3] = '.';
+			Dest[DestCapacity - 2] = '.';
+		}
+		Dest[DestCapacity - 1] = 0;
+	}
+}
+
+bool StringFormat(char *Dest, int DestCapacity, const char *Format, ...){
+	va_list ap;
+	va_start(ap, Format);
+	int Written = vsnprintf(Dest, DestCapacity, Format, ap);
+	va_end(ap);
+	return Written >= 0 && Written < DestCapacity;
 }
 
 uint32 HashString(const char *String){
@@ -383,37 +422,41 @@ bool ReadConfig(const char *FileName, TConfig *Config){
 		}else if(StringEqCI(Key, "SQLite.MaxCachedStatements")){
 			ReadIntegerConfig(&Config->SQLite.MaxCachedStatements, Val);
 #elif DATABASE_POSTGRESQL
-		}else if(StringEqCI(Key, "PostgreSQL.UnixSocket")){
-			ReadStringBufConfig(Config->PostgreSQL.UnixSocket, Val);
 		}else if(StringEqCI(Key, "PostgreSQL.Host")){
 			ReadStringBufConfig(Config->PostgreSQL.Host, Val);
 		}else if(StringEqCI(Key, "PostgreSQL.Port")){
-			ReadIntegerConfig(&Config->PostgreSQL.Port, Val);
+			ReadStringBufConfig(Config->PostgreSQL.Port, Val);
+		}else if(StringEqCI(Key, "PostgreSQL.DBName")){
+			ReadStringBufConfig(Config->PostgreSQL.DBName, Val);
 		}else if(StringEqCI(Key, "PostgreSQL.User")){
 			ReadStringBufConfig(Config->PostgreSQL.User, Val);
 		}else if(StringEqCI(Key, "PostgreSQL.Password")){
 			ReadStringBufConfig(Config->PostgreSQL.Password, Val);
-		}else if(StringEqCI(Key, "PostgreSQL.Database")){
-			ReadStringBufConfig(Config->PostgreSQL.Database, Val);
-		}else if(StringEqCI(Key, "PostgreSQL.TLS")){
-			ReadBooleanConfig(&Config->PostgreSQL.TLS, Val);
+		}else if(StringEqCI(Key, "PostgreSQL.ConnectTimeout")){
+			ReadStringBufConfig(Config->PostgreSQL.ConnectTimeout, Val);
+		}else if(StringEqCI(Key, "PostgreSQL.ClientEncoding")){
+			ReadStringBufConfig(Config->PostgreSQL.ClientEncoding, Val);
+		}else if(StringEqCI(Key, "PostgreSQL.ApplicationName")){
+			ReadStringBufConfig(Config->PostgreSQL.ApplicationName, Val);
+		}else if(StringEqCI(Key, "PostgreSQL.SSLMode")){
+			ReadStringBufConfig(Config->PostgreSQL.SSLMode, Val);
+		}else if(StringEqCI(Key, "PostgreSQL.SSLRootCert")){
+			ReadStringBufConfig(Config->PostgreSQL.SSLRootCert, Val);
 		}else if(StringEqCI(Key, "PostgreSQL.MaxCachedStatements")){
 			ReadIntegerConfig(&Config->PostgreSQL.MaxCachedStatements, Val);
 #elif DATABASE_MYSQL
-		}else if(StringEqCI(Key, "MySQL.UnixSocket")){
-			ReadStringBufConfig(Config->MySQL.UnixSocket, Val);
 		}else if(StringEqCI(Key, "MySQL.Host")){
 			ReadStringBufConfig(Config->MySQL.Host, Val);
 		}else if(StringEqCI(Key, "MySQL.Port")){
-			ReadIntegerConfig(&Config->MySQL.Port, Val);
+			ReadStringBufConfig(Config->MySQL.Port, Val);
+		}else if(StringEqCI(Key, "MySQL.DBName")){
+			ReadStringBufConfig(Config->MySQL.DBName, Val);
 		}else if(StringEqCI(Key, "MySQL.User")){
 			ReadStringBufConfig(Config->MySQL.User, Val);
 		}else if(StringEqCI(Key, "MySQL.Password")){
 			ReadStringBufConfig(Config->MySQL.Password, Val);
-		}else if(StringEqCI(Key, "MySQL.Database")){
-			ReadStringBufConfig(Config->MySQL.Database, Val);
-		}else if(StringEqCI(Key, "MySQL.TLS")){
-			ReadBooleanConfig(&Config->MySQL.TLS, Val);
+		}else if(StringEqCI(Key, "MySQL.UnixSocket")){
+			ReadStringBufConfig(Config->MySQL.UnixSocket, Val);
 		}else if(StringEqCI(Key, "MySQL.MaxCachedStatements")){
 			ReadIntegerConfig(&Config->MySQL.MaxCachedStatements, Val);
 #endif
@@ -462,14 +505,13 @@ int main(int argc, const char **argv){
 	(void)argc;
 	(void)argv;
 
+	g_StartTimeMS = GetClockMonotonicMS();
 	AtomicStore(&g_ShutdownSignal, 0);
 	if(!SigHandler(SIGPIPE, SIG_IGN)
 	|| !SigHandler(SIGINT, ShutdownHandler)
 	|| !SigHandler(SIGTERM, ShutdownHandler)){
 		return EXIT_FAILURE;
 	}
-
-	g_StartTimeMS = GetClockMonotonicMS();
 
 	// HostCache Config
 	g_Config.MaxCachedHostNames = 100;
@@ -480,22 +522,24 @@ int main(int argc, const char **argv){
 	StringBufCopy(g_Config.SQLite.File, "tibia.db");
 	g_Config.SQLite.MaxCachedStatements = 100;
 #elif DATABASE_POSTGRESQL
-	StringBufCopy(g_Config.PostgreSQL.UnixSocket, "");
-	StringBufCopy(g_Config.PostgreSQL.Host, "localhost");
-	g_Config.PostgreSQL.Port = 5432;
-	StringBufCopy(g_Config.PostgreSQL.User, "postgres");
-	StringBufCopy(g_Config.PostgreSQL.Password, "");
-	StringBufCopy(g_Config.PostgreSQL.Database, "tibia");
-	g_Config.PostgreSQL.TLS = true;
+	StringBufCopy(g_Config.PostgreSQL.Host,            "localhost");
+	StringBufCopy(g_Config.PostgreSQL.Port,            "5432");
+	StringBufCopy(g_Config.PostgreSQL.DBName,          "tibia");
+	StringBufCopy(g_Config.PostgreSQL.User,            "tibia");
+	StringBufCopy(g_Config.PostgreSQL.Password,        "");
+	StringBufCopy(g_Config.PostgreSQL.ConnectTimeout,  "");
+	StringBufCopy(g_Config.PostgreSQL.ClientEncoding,  "UTF8");
+	StringBufCopy(g_Config.PostgreSQL.ApplicationName, "QueryManager");
+	StringBufCopy(g_Config.PostgreSQL.SSLMode,         "");
+	StringBufCopy(g_Config.PostgreSQL.SSLRootCert,     "");
 	g_Config.PostgreSQL.MaxCachedStatements = 100;
 #elif DATABASE_MYSQL
+	StringBufCopy(g_Config.MySQL.Host,       "localhost");
+	StringBufCopy(g_Config.MySQL.Port,       "3306");
+	StringBufCopy(g_Config.MySQL.DBName,     "tibia");
+	StringBufCopy(g_Config.MySQL.User,       "tibia");
+	StringBufCopy(g_Config.MySQL.Password,   "");
 	StringBufCopy(g_Config.MySQL.UnixSocket, "");
-	StringBufCopy(g_Config.MySQL.Host, "localhost");
-	g_Config.MySQL.Port = 5432;
-	StringBufCopy(g_Config.MySQL.User, "postgres");
-	StringBufCopy(g_Config.MySQL.Password, "");
-	StringBufCopy(g_Config.MySQL.Database, "tibia");
-	g_Config.MySQL.TLS = true;
 	g_Config.MySQL.MaxCachedStatements = 100;
 #endif
 
@@ -508,7 +552,7 @@ int main(int argc, const char **argv){
 	g_Config.MaxConnections = 25;
 	g_Config.MaxConnectionIdleTime = 60 * 1000; // milliseconds
 
-	LOG("Tibia Query Manager v0.2");
+	LOG("Tibia Query Manager v0.2 (%s)", DATABASE_SYSTEM_NAME);
 	if(!ReadConfig("config.cfg", &g_Config)){
 		return EXIT_FAILURE;
 	}
@@ -520,25 +564,27 @@ int main(int argc, const char **argv){
 	LOG("SQLite file:                      \"%s\"", g_Config.SQLite.File);
 	LOG("SQLite max cached statements:     %d",     g_Config.SQLite.MaxCachedStatements);
 #elif DATABASE_POSTGRESQL
-	LOG("PostgreSQL unix socket:           \"%s\"", g_Config.PostgreSQL.UnixSocket);
 	LOG("PostgreSQL host:                  \"%s\"", g_Config.PostgreSQL.Host);
-	LOG("PostgreSQL port:                  %d",     g_Config.PostgreSQL.Port);
+	LOG("PostgreSQL port:                  \"%s\"", g_Config.PostgreSQL.Port);
+	LOG("PostgreSQL dbname:                \"%s\"", g_Config.PostgreSQL.DBName);
 	LOG("PostgreSQL user:                  \"%s\"", g_Config.PostgreSQL.User);
-	LOG("PostgreSQL database:              \"%s\"", g_Config.PostgreSQL.Database);
-	LOG("PostgreSQL TLS:                   %s",     g_Config.PostgreSQL.TLS ? "true" : "false");
+	LOG("PostgreSQL connect_timeout:       \"%s\"", g_Config.PostgreSQL.ConnectTimeout);
+	LOG("PostgreSQL client_encoding:       \"%s\"", g_Config.PostgreSQL.ClientEncoding);
+	LOG("PostgreSQL application_name:      \"%s\"", g_Config.PostgreSQL.ApplicationName);
+	LOG("PostgreSQL sslmode:               \"%s\"", g_Config.PostgreSQL.SSLMode);
+	LOG("PostgreSQL sslrootcert:           \"%s\"", g_Config.PostgreSQL.SSLRootCert);
 	LOG("PostgreSQL max cached statements: %d",     g_Config.PostgreSQL.MaxCachedStatements);
 #elif DATABASE_MYSQL
-	LOG("MySQL unix socket:                \"%s\"", g_Config.MySQL.UnixSocket);
 	LOG("MySQL host:                       \"%s\"", g_Config.MySQL.Host);
-	LOG("MySQL port:                       %d",     g_Config.MySQL.Port);
+	LOG("MySQL port:                       \"%s\"", g_Config.MySQL.Port);
+	LOG("MySQL dbname:                     \"%s\"", g_Config.MySQL.DBName);
 	LOG("MySQL user:                       \"%s\"", g_Config.MySQL.User);
-	LOG("MySQL database:                   \"%s\"", g_Config.MySQL.Database);
-	LOG("MySQL TLS:                        %s",     g_Config.MySQL.TLS ? "true" : "false");
+	LOG("MySQL unix socket:                \"%s\"", g_Config.MySQL.UnixSocket);
 	LOG("MySQL max cached statements:      %d",     g_Config.MySQL.MaxCachedStatements);
 #endif
 	LOG("Query manager port:               %d",     g_Config.QueryManagerPort);
 	LOG("Query worker threads:             %d",     g_Config.QueryWorkerThreads);
-	LOG("Query buffer size:                %d",     g_Config.QueryBufferSize);
+	LOG("Query buffer size:                %dB",    g_Config.QueryBufferSize);
 	LOG("Query max attempts:               %d",     g_Config.QueryMaxAttempts);
 	LOG("Max connections:                  %d",     g_Config.MaxConnections);
 	LOG("Max connection idle time:         %dms",   g_Config.MaxConnectionIdleTime);

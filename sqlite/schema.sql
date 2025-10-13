@@ -36,7 +36,7 @@ CREATE TABLE IF NOT EXISTS Characters (
 	Sex INTEGER NOT NULL,
 	Guild TEXT NOT NULL COLLATE NOCASE DEFAULT '',
 	Rank TEXT NOT NULL COLLATE NOCASE DEFAULT '',
-	Title TEXT NOT NULL COLLATE NOCASE DEFAULT '',
+	Title TEXT NOT NULL DEFAULT '',
 	Level INTEGER NOT NULL DEFAULT 0,
 	Profession TEXT NOT NULL DEFAULT '',
 	Residence TEXT NOT NULL DEFAULT '',
@@ -132,9 +132,9 @@ CREATE TABLE IF NOT EXISTS HouseOwners (
 	PRIMARY KEY (WorldID, HouseID)
 );
 
--- NOTE(fusion): An auction would have a non null `FinishTime` but it doesn't make
--- sense to finish an auction just to restart it afterwards so it should only be
--- set after the first bid, along with `BidderID` and `BidAmount`.
+-- NOTE(fusion): Auctions with a NULL `FinishTime` aren't active, to avoid running
+-- multiple times with no actual bidder. It should be set after the first bid along
+-- with `BidderID` and `BidAmount`.
 CREATE TABLE IF NOT EXISTS HouseAuctions (
 	WorldID INTEGER NOT NULL,
 	HouseID INTEGER NOT NULL,

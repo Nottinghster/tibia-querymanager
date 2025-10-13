@@ -4,7 +4,7 @@
 
 struct TCachedStatement{
 	sqlite3_stmt     *Stmt;
-	int64            LastUsed;
+	int              LastUsed;
 	uint32           Hash;
 };
 
@@ -43,6 +43,7 @@ public:
 };
 
 static void EnsureStatementCache(TDatabase *Database){
+	ASSERT(Database != NULL);
 	if(Database->CachedStatements == NULL){
 		ASSERT(g_Config.SQLite.MaxCachedStatements > 0);
 		Database->MaxCachedStatements = g_Config.SQLite.MaxCachedStatements;
@@ -52,6 +53,7 @@ static void EnsureStatementCache(TDatabase *Database){
 }
 
 static void DeleteStatementCache(TDatabase *Database){
+	ASSERT(Database != NULL);
 	if(Database->CachedStatements != NULL){
 		ASSERT(Database->MaxCachedStatements > 0);
 		for(int i = 0; i < Database->MaxCachedStatements; i += 1){
@@ -72,11 +74,12 @@ static void DeleteStatementCache(TDatabase *Database){
 }
 
 static sqlite3_stmt *PrepareQuery(TDatabase *Database, const char *Text){
+	ASSERT(Database != NULL);
 	EnsureStatementCache(Database);
 
 	sqlite3_stmt *Stmt = NULL;
 	int LeastRecentlyUsed = 0;
-	int64 LeastRecentlyUsedTime = Database->CachedStatements[0].LastUsed;
+	int LeastRecentlyUsedTime = Database->CachedStatements[0].LastUsed;
 	uint32 Hash = HashString(Text);
 	for(int i = 0; i < Database->MaxCachedStatements; i += 1){
 		TCachedStatement *Entry = &Database->CachedStatements[i];
@@ -89,7 +92,7 @@ static sqlite3_stmt *PrepareQuery(TDatabase *Database, const char *Text){
 		if(Entry->Stmt != NULL && Entry->Hash == Hash){
 			const char *EntryText = sqlite3_sql(Entry->Stmt);
 			ASSERT(EntryText != NULL);
-			if(strcmp(EntryText, Text) == 0){
+			if(StringEq(EntryText, Text)){
 				Stmt = Entry->Stmt;
 				Entry->LastUsed = GetMonotonicUptimeMS();
 				break;
@@ -128,7 +131,7 @@ static sqlite3_stmt *PrepareQuery(TDatabase *Database, const char *Text){
 	return Stmt;
 }
 
-// Database Initialization
+// Database Management
 //==============================================================================
 // NOTE(fusion): From `https://www.sqlite.org/pragma.html`:
 //	"Some pragmas take effect during the SQL compilation stage, not the execution
@@ -441,7 +444,7 @@ bool TransactionScope::Commit(void){
 	return true;
 }
 
-// Primary tables
+// Primary Tables
 //==============================================================================
 bool GetWorldID(TDatabase *Database, const char *World, int *WorldID){
 	ASSERT(Database != NULL && World != NULL && WorldID != NULL);
@@ -1488,7 +1491,7 @@ bool GetIPAddressFailedLoginAttempts(TDatabase *Database, int IPAddress, int Tim
 	return true;
 }
 
-// House tables
+// House Tables
 //==============================================================================
 bool FinishHouseAuctions(TDatabase *Database, int WorldID, DynamicArray<THouseAuction> *Auctions){
 	ASSERT(Database != NULL && Auctions != NULL);
@@ -1896,7 +1899,7 @@ bool ExcludeFromAuctions(TDatabase *Database, int WorldID, int CharacterID, int 
 	return sqlite3_changes(Database->Handle) > 0;
 }
 
-// Banishment tables
+// Banishment Tables
 //==============================================================================
 bool IsCharacterNamelocked(TDatabase *Database, int CharacterID, bool *Result){
 	ASSERT(Database != NULL && Result != NULL);
@@ -2291,7 +2294,7 @@ bool InsertReportedStatement(TDatabase *Database, int WorldID, TStatement *State
 	return true;
 }
 
-// Info tables
+// Info Tables
 //==============================================================================
 bool GetKillStatistics(TDatabase *Database, int WorldID, DynamicArray<TKillStatistics> *Stats){
 	ASSERT(Database != NULL && Stats != NULL);

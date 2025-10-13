@@ -75,8 +75,18 @@ typedef size_t usize;
 		TRAP();																	\
 	}while(0)
 
-#if !DATABASE_SQLITE && !DATABASE_POSTGRESQL && !DATABASE_MYSQL
+#if (DATABASE_SQLITE + DATABASE_POSTGRESQL + DATABASE_MYSQL) == 0
 #	error "No database system defined."
+#elif (DATABASE_SQLITE + DATABASE_POSTGRESQL + DATABASE_MYSQL) > 1
+#	error "Multiple database systems defined."
+#endif
+
+#if DATABASE_SQLITE
+#	define DATABASE_SYSTEM_NAME "SQLite"
+#elif DATABASE_POSTGRESQL
+#	define DATABASE_SYSTEM_NAME "PostgreSQL"
+#elif DATABASE_MYSQL
+#	define DATABASE_SYSTEM_NAME "MySQL"
 #endif
 
 struct TConfig{
@@ -92,24 +102,28 @@ struct TConfig{
 	} SQLite;
 #elif DATABASE_POSTGRESQL
 	struct{
-		char UnixSocket[100];
+		// NOTE(fusion): Most of these are stored as strings because that is the
+		// format the connector expects for connect parameters.
 		char Host[100];
-		int  Port;
+		char Port[30];
+		char DBName[30];
 		char User[30];
 		char Password[30];
-		char Database[30];
-		bool TLS;
+		char ConnectTimeout[30];
+		char ClientEncoding[30];
+		char ApplicationName[30];
+		char SSLMode[30];
+		char SSLRootCert[100];
 		int  MaxCachedStatements;
 	} PostgreSQL;
 #elif DATABASE_MYSQL
 	struct{
-		char UnixSocket[100];
 		char Host[100];
-		int  Port;
+		char Port[30];
+		char DBName[30];
 		char User[30];
 		char Password[30];
-		char Database[30];
-		bool TLS;
+		char UnixSocket[100];
 		int  MaxCachedStatements;
 	} MySQL;
 #endif
@@ -142,6 +156,8 @@ bool StringEq(const char *A, const char *B);
 bool StringEqCI(const char *A, const char *B);
 bool StringCopyN(char *Dest, int DestCapacity, const char *Src, int SrcLength);
 bool StringCopy(char *Dest, int DestCapacity, const char *Src);
+void StringCopyEllipsis(char *Dest, int DestCapacity, const char *Src);
+bool StringFormat(char *Dest, int DestCapacity, const char *Format, ...) ATTR_PRINTF(3, 4);
 uint32 HashString(const char *String);
 bool ParseIPAddress(const char *String, int *OutAddr);
 
@@ -154,6 +170,8 @@ bool ReadConfig(const char *FileName, TConfig *Config);
 // IMPORTANT(fusion): These macros should only be used when `Dest` is a char array
 // to simplify the call to `StringCopy` where we'd use `sizeof(Dest)` to determine
 // the size of the destination anyways.
+#define StringBufFormat(Dest, ...)           StringFormat(Dest, sizeof(Dest), __VA_ARGS__)
+#define StringBufCopyEllipsis(Dest, Src)     StringCopyEllipsis(Dest, sizeof(Dest), Src);
 #define StringBufCopy(Dest, Src)             StringCopy(Dest, sizeof(Dest), Src)
 #define StringBufCopyN(Dest, Src, SrcLength) StringCopyN(Dest, sizeof(Dest), Src, SrcLength)
 #define ReadStringBufConfig(Dest, Val)       ReadStringConfig(Dest, sizeof(Dest), Val)
@@ -502,7 +520,6 @@ private:
 			T *NewData = (T*)realloc(m_Data, sizeof(T) * (usize)NewCapacity);
 			if(NewData == NULL){
 				PANIC("Failed to resize dynamic array from %d to %d", OldCapacity, NewCapacity);
-				return;
 			}
 
 			// NOTE(fusion): Zero initialize newly allocated elements.
@@ -777,7 +794,15 @@ struct TOnlineCharacter{
 	char Profession[30];
 };
 
+// NOTE(fusion): Database Management
 struct TDatabase;
+void DatabaseClose(TDatabase *Database);
+TDatabase *DatabaseOpen(void);
+int DatabaseChanges(TDatabase *Database);
+bool DatabaseCheckpoint(TDatabase *Database);
+int DatabaseMaxConcurrency(void);
+
+// NOTE(fusion): TransactionScope
 struct TransactionScope{
 private:
 	const char *m_Context;
@@ -790,14 +815,7 @@ public:
 	bool Commit(void);
 };
 
-// NOTE(fusion): Database management.
-TDatabase *DatabaseOpen(void);
-void DatabaseClose(TDatabase *Database);
-int DatabaseChanges(TDatabase *Database);
-bool DatabaseCheckpoint(TDatabase *Database);
-int DatabaseMaxConcurrency(void);
-
-// NOTE(fusion): Primary tables.
+// NOTE(fusion): Primary Tables
 bool GetWorldID(TDatabase *Database, const char *World, int *WorldID);
 bool GetWorlds(TDatabase *Database, DynamicArray<TWorld> *Worlds);
 bool GetWorldConfig(TDatabase *Database, int WorldID, TWorldConfig *WorldConfig);
@@ -836,7 +854,7 @@ bool InsertLoginAttempt(TDatabase *Database, int AccountID, int IPAddress, bool 
 bool GetAccountFailedLoginAttempts(TDatabase *Database, int AccountID, int TimeWindow, int *Result);
 bool GetIPAddressFailedLoginAttempts(TDatabase *Database, int IPAddress, int TimeWindow, int *Result);
 
-// NOTE(fusion): House tables.
+// NOTE(fusion): House Tables
 bool FinishHouseAuctions(TDatabase *Database, int WorldID, DynamicArray<THouseAuction> *Auctions);
 bool FinishHouseTransfers(TDatabase *Database, int WorldID, DynamicArray<THouseTransfer> *Transfers);
 bool GetFreeAccountEvictions(TDatabase *Database, int WorldID, DynamicArray<THouseEviction> *Evictions);
@@ -851,7 +869,7 @@ bool DeleteHouses(TDatabase *Database, int WorldID);
 bool InsertHouses(TDatabase *Database, int WorldID, int NumHouses, THouse *Houses);
 bool ExcludeFromAuctions(TDatabase *Database, int WorldID, int CharacterID, int Duration, int BanishmentID);
 
-// NOTE(fusion): Banishment tables.
+// NOTE(fusion): Banishment Tables
 bool IsCharacterNamelocked(TDatabase *Database, int CharacterID, bool *Result);
 bool GetNamelockStatus(TDatabase *Database, int CharacterID, TNamelockStatus *Status);
 bool InsertNamelock(TDatabase *Database, int CharacterID, int IPAddress,
@@ -871,7 +889,7 @@ bool InsertStatements(TDatabase *Database, int WorldID, int NumStatements, TStat
 bool InsertReportedStatement(TDatabase *Database, int WorldID, TStatement *Statement,
 		int BanishmentID, int ReporterID, const char *Reason, const char *Comment);
 
-// NOTE(fusion): Info tables.
+// NOTE(fusion): Info Tables
 bool GetKillStatistics(TDatabase *Database, int WorldID, DynamicArray<TKillStatistics> *Stats);
 bool MergeKillStatistics(TDatabase *Database, int WorldID, int NumStats, TKillStatistics *Stats);
 bool GetOnlineCharacters(TDatabase *Database, int WorldID, DynamicArray<TOnlineCharacter> *Characters);
