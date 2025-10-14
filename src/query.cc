@@ -1342,6 +1342,7 @@ void ProcessCancelHouseTransfer(TDatabase *Database, TQuery *Query){
 void ProcessLoadWorldConfig(TDatabase *Database, TQuery *Query){
 	TWorldConfig WorldConfig = {};
 	QUERY_STOP_IF(!GetWorldConfig(Database, Query->WorldID, &WorldConfig));
+	QUERY_FAIL_IF(WorldConfig.WorldID == 0);
 
 	int IPAddress;
 	QUERY_FAIL_IF(!ResolveHostName(WorldConfig.HostName, &IPAddress));

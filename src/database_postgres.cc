@@ -18,8 +18,7 @@
 
 // IMPORTANT(fusion): Address families used with INET and CIDR binary format.
 // They're taken from `utils/inet.h` which is not included with libpq but should
-// be stable across different systems, mostly because AF_INET should be stable
-// across different systems.
+// be stable across different systems, mostly because AF_INET should be stable.
 #define POSTGRESQL_AF_INET  (AF_INET + 0)
 #define POSTGRESQL_AF_INET6 (AF_INET + 1)
 STATIC_ASSERT(POSTGRESQL_AF_INET  == 2);
@@ -904,7 +903,7 @@ TDatabase *DatabaseOpen(void){
 
 		for(int i = 0; i <= 1; i += 1)
 		for(int j = 0; j <= 1; j += 1){
-			LOG("TEXT (%d, %d)", i, j);
+			LOG("TEST (%d, %d)", i, j);
 			ParamBuffer Params;
 			ParamBegin(&Params, 2, i);
 			ParamTimestamp(&Params, Timestamp);
@@ -1018,7 +1017,7 @@ bool GetWorlds(TDatabase *Database, DynamicArray<TWorld> *Worlds){
 bool GetWorldConfig(TDatabase *Database, int WorldID, TWorldConfig *WorldConfig){
 	ASSERT(Database != NULL && WorldConfig != NULL);
 	const char *Stmt = PrepareQuery(Database,
-			"SELECT Type, RebootTime, Host, Port, MaxPlayers,"
+			"SELECT WorldID, Type, RebootTime, Host, Port, MaxPlayers,"
 				" PremiumPlayerBuffer, MaxNewbies, PremiumNewbieBuffer"
 			" FROM Worlds WHERE WorldID = $1::INTEGER");
 	if(Stmt == NULL){
@@ -1041,14 +1040,15 @@ bool GetWorldConfig(TDatabase *Database, int WorldID, TWorldConfig *WorldConfig)
 	// empty result set.
 	memset(WorldConfig, 0, sizeof(TWorldConfig));
 	if(PQntuples(Result) > 0){
-		WorldConfig->Type = GetResultInt(Result, 0, 0);
-		WorldConfig->RebootTime = GetResultInt(Result, 0, 1);
-		StringBufCopy(WorldConfig->HostName, GetResultText(Result, 0, 2));
-		WorldConfig->Port = GetResultInt(Result, 0, 3);
-		WorldConfig->MaxPlayers = GetResultInt(Result, 0, 4);
-		WorldConfig->PremiumPlayerBuffer = GetResultInt(Result, 0, 5);
-		WorldConfig->MaxNewbies = GetResultInt(Result, 0, 6);
-		WorldConfig->PremiumNewbieBuffer = GetResultInt(Result, 0, 7);
+		WorldConfig->WorldID = GetResultInt(Result, 0, 0);
+		WorldConfig->Type = GetResultInt(Result, 0, 1);
+		WorldConfig->RebootTime = GetResultInt(Result, 0, 2);
+		StringBufCopy(WorldConfig->HostName, GetResultText(Result, 0, 3));
+		WorldConfig->Port = GetResultInt(Result, 0, 4);
+		WorldConfig->MaxPlayers = GetResultInt(Result, 0, 5);
+		WorldConfig->PremiumPlayerBuffer = GetResultInt(Result, 0, 6);
+		WorldConfig->MaxNewbies = GetResultInt(Result, 0, 7);
+		WorldConfig->PremiumNewbieBuffer = GetResultInt(Result, 0, 8);
 	}
 
 	return true;

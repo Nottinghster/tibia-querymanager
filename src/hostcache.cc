@@ -36,9 +36,9 @@ static bool DoResolveHostName(const char *HostName, int *OutAddr){
 	addrinfo Hints = {};
 	Hints.ai_family = AF_INET;
 	Hints.ai_socktype = SOCK_STREAM;
-	int ErrCode = getaddrinfo(HostName, NULL, &Hints, &Result);
-	if(ErrCode != 0){
-		LOG_ERR("Failed to resolve hostname \"%s\": %s", HostName, gai_strerror(ErrCode));
+	int ErrorCode = getaddrinfo(HostName, NULL, &Hints, &Result);
+	if(ErrorCode != 0){
+		LOG_ERR("Failed to resolve hostname \"%s\": %s", HostName, gai_strerror(ErrorCode));
 		return false;
 	}
 

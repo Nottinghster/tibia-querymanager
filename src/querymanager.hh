@@ -663,6 +663,7 @@ struct TWorld{
 };
 
 struct TWorldConfig{
+	int WorldID;
 	int Type;
 	int RebootTime;
 	char HostName[100];

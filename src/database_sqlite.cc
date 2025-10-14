@@ -509,7 +509,7 @@ bool GetWorlds(TDatabase *Database, DynamicArray<TWorld> *Worlds){
 bool GetWorldConfig(TDatabase *Database, int WorldID, TWorldConfig *WorldConfig){
 	ASSERT(Database != NULL && WorldConfig != NULL);
 	sqlite3_stmt *Stmt = PrepareQuery(Database,
-			"SELECT Type, RebootTime, Host, Port, MaxPlayers,"
+			"SELECT WorldID, Type, RebootTime, Host, Port, MaxPlayers,"
 				" PremiumPlayerBuffer, MaxNewbies, PremiumNewbieBuffer"
 			" FROM Worlds WHERE WorldID = ?1");
 	if(Stmt == NULL){
@@ -523,19 +523,25 @@ bool GetWorldConfig(TDatabase *Database, int WorldID, TWorldConfig *WorldConfig)
 		return false;
 	}
 
-	if(sqlite3_step(Stmt) != SQLITE_ROW){
+	int ErrorCode = sqlite3_step(Stmt);
+	if(ErrorCode != SQLITE_ROW && ErrorCode != SQLITE_DONE){
 		LOG_ERR("Failed to execute query: %s", sqlite3_errmsg(Database->Handle));
 		return false;
 	}
 
-	WorldConfig->Type					= sqlite3_column_int(Stmt, 0);
-	WorldConfig->RebootTime				= sqlite3_column_int(Stmt, 1);
-	StringBufCopy(WorldConfig->HostName, (const char*)sqlite3_column_text(Stmt, 2));
-	WorldConfig->Port					= sqlite3_column_int(Stmt, 3);
-	WorldConfig->MaxPlayers				= sqlite3_column_int(Stmt, 4);
-	WorldConfig->PremiumPlayerBuffer	= sqlite3_column_int(Stmt, 5);
-	WorldConfig->MaxNewbies				= sqlite3_column_int(Stmt, 6);
-	WorldConfig->PremiumNewbieBuffer	= sqlite3_column_int(Stmt, 7);
+	memset(WorldConfig, 0, sizeof(TWorldConfig));
+	if(ErrorCode == SQLITE_ROW){
+		WorldConfig->WorldID				= sqlite3_column_int(Stmt, 0);
+		WorldConfig->Type					= sqlite3_column_int(Stmt, 1);
+		WorldConfig->RebootTime				= sqlite3_column_int(Stmt, 2);
+		StringBufCopy(WorldConfig->HostName, (const char*)sqlite3_column_text(Stmt, 3));
+		WorldConfig->Port					= sqlite3_column_int(Stmt, 4);
+		WorldConfig->MaxPlayers				= sqlite3_column_int(Stmt, 5);
+		WorldConfig->PremiumPlayerBuffer	= sqlite3_column_int(Stmt, 6);
+		WorldConfig->MaxNewbies				= sqlite3_column_int(Stmt, 7);
+		WorldConfig->PremiumNewbieBuffer	= sqlite3_column_int(Stmt, 8);
+	}
+
 	return true;
 }
 
@@ -555,13 +561,13 @@ bool AccountExists(TDatabase *Database, int AccountID, const char *Email, bool *
 		return false;
 	}
 
-	int ErrCode = sqlite3_step(Stmt);
-	if(ErrCode != SQLITE_ROW && ErrCode != SQLITE_DONE){
+	int ErrorCode = sqlite3_step(Stmt);
+	if(ErrorCode != SQLITE_ROW && ErrorCode != SQLITE_DONE){
 		LOG_ERR("Failed to execute query: %s", sqlite3_errmsg(Database->Handle));
 		return false;
 	}
 
-	*Result = (ErrCode == SQLITE_ROW);
+	*Result = (ErrorCode == SQLITE_ROW);
 	return true;
 }
 
@@ -580,13 +586,13 @@ bool AccountNumberExists(TDatabase *Database, int AccountID, bool *Result){
 		return false;
 	}
 
-	int ErrCode = sqlite3_step(Stmt);
-	if(ErrCode != SQLITE_ROW && ErrCode != SQLITE_DONE){
+	int ErrorCode = sqlite3_step(Stmt);
+	if(ErrorCode != SQLITE_ROW && ErrorCode != SQLITE_DONE){
 		LOG_ERR("Failed to execute query: %s", sqlite3_errmsg(Database->Handle));
 		return false;
 	}
 
-	*Result = (ErrCode == SQLITE_ROW);
+	*Result = (ErrorCode == SQLITE_ROW);
 	return true;
 }
 
@@ -605,13 +611,13 @@ bool AccountEmailExists(TDatabase *Database, const char *Email, bool *Result){
 		return false;
 	}
 
-	int ErrCode = sqlite3_step(Stmt);
-	if(ErrCode != SQLITE_ROW && ErrCode != SQLITE_DONE){
+	int ErrorCode = sqlite3_step(Stmt);
+	if(ErrorCode != SQLITE_ROW && ErrorCode != SQLITE_DONE){
 		LOG_ERR("Failed to execute query: %s", sqlite3_errmsg(Database->Handle));
 		return false;
 	}
 
-	*Result = (ErrCode == SQLITE_ROW);
+	*Result = (ErrorCode == SQLITE_ROW);
 	return true;
 }
 
@@ -634,14 +640,14 @@ bool CreateAccount(TDatabase *Database, int AccountID, const char *Email, const 
 		return false;
 	}
 
-	int ErrCode = sqlite3_step(Stmt);
-	if(ErrCode != SQLITE_DONE && ErrCode != SQLITE_CONSTRAINT){
+	int ErrorCode = sqlite3_step(Stmt);
+	if(ErrorCode != SQLITE_DONE && ErrorCode != SQLITE_CONSTRAINT){
 		LOG_ERR("Failed to execute query: %s", sqlite3_errmsg(Database->Handle));
 		return false;
 	}
 
 	// TODO(fusion): Maybe have a `ContraintError` output param?
-	return (ErrCode == SQLITE_DONE);
+	return (ErrorCode == SQLITE_DONE);
 }
 
 bool GetAccountData(TDatabase *Database, int AccountID, TAccount *Account){
@@ -857,13 +863,13 @@ bool CharacterNameExists(TDatabase *Database, const char *Name, bool *Result){
 		return false;
 	}
 
-	int ErrCode = sqlite3_step(Stmt);
-	if(ErrCode != SQLITE_ROW && ErrCode != SQLITE_DONE){
+	int ErrorCode = sqlite3_step(Stmt);
+	if(ErrorCode != SQLITE_ROW && ErrorCode != SQLITE_DONE){
 		LOG_ERR("Failed to execute query: %s", sqlite3_errmsg(Database->Handle));
 		return false;
 	}
 
-	*Result = (ErrCode == SQLITE_ROW);
+	*Result = (ErrorCode == SQLITE_ROW);
 	return false;
 }
 
@@ -886,14 +892,14 @@ bool CreateCharacter(TDatabase *Database, int WorldID, int AccountID, const char
 		return false;
 	}
 
-	int ErrCode = sqlite3_step(Stmt);
-	if(ErrCode != SQLITE_DONE && ErrCode != SQLITE_CONSTRAINT){
+	int ErrorCode = sqlite3_step(Stmt);
+	if(ErrorCode != SQLITE_DONE && ErrorCode != SQLITE_CONSTRAINT){
 		LOG_ERR("Failed to execute query: %s", sqlite3_errmsg(Database->Handle));
 		return false;
 	}
 
 	// TODO(fusion): Same as `CreateAccount`?
-	return (ErrCode == SQLITE_DONE);
+	return (ErrorCode == SQLITE_DONE);
 }
 
 bool GetCharacterID(TDatabase *Database, int WorldID, const char *CharacterName, int *CharacterID){
@@ -1250,7 +1256,8 @@ bool GetCharacterIndexEntries(TDatabase *Database, int WorldID, int MinimumChara
 		EntryIndex += 1;
 	}
 
-	if(sqlite3_errcode(Database->Handle) != SQLITE_DONE){
+	int ErrorCode = sqlite3_errcode(Database->Handle);
+	if(ErrorCode != SQLITE_ROW && ErrorCode != SQLITE_DONE){
 		LOG_ERR("Failed to execute query: %s", sqlite3_errmsg(Database->Handle));
 		return false;
 	}
