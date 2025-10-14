@@ -74,6 +74,16 @@ struct tm GetLocalTime(time_t t){
 	return result;
 }
 
+struct tm GetGMTime(time_t t){
+	struct tm result;
+#if COMPILER_MSVC
+	gmtime_s(&result, &t);
+#else
+	gmtime_r(&t, &result);
+#endif
+	return result;
+}
+
 int64 GetClockMonotonicMS(void){
 #if OS_WINDOWS
 	LARGE_INTEGER Counter, Frequency;

@@ -146,6 +146,7 @@ void LogAddVerbose(const char *Prefix, const char *Function,
 		const char *File, int Line, const char *Format, ...) ATTR_PRINTF(5, 6);
 
 struct tm GetLocalTime(time_t t);
+struct tm GetGMTime(time_t t);
 int64 GetClockMonotonicMS(void);
 int GetMonotonicUptimeMS(void);
 void SleepMS(int DurationMS);

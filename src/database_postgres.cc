@@ -1,12 +1,29 @@
 #if DATABASE_POSTGRESQL
 #include "querymanager.hh"
 #include "libpq-fe.h"
+#include <netinet/ip.h>
 
 // IMPORTANT(fusion): With PostgreSQL being a distributed database, we cannot
 // rely on automatic schema upgrades like in the case of SQLite. It must be
 // managed manually and there must be an agreement on the current version
 // which is why there is a `SchemaInfo` table.
 #define POSTGRESQL_SCHEMA_VERSION 1
+
+// IMPORTANT(fusion): PostgreSQL timestamps will count the number of microseconds
+// since 2000-01-01 00:00:00, with negative values for timestamps before it. To be
+// able to convert between PostgreSQL and UNIX timestamps we need the EPOCH of one
+// represented as a timestamp of the other, which is exactly what this is. This is
+// the PostgreSQL EPOCH represented as an UNIX timestamp.
+#define POSTGRESQL_EPOCH 946684800
+
+// IMPORTANT(fusion): Address families used with INET and CIDR binary format.
+// They're taken from `utils/inet.h` which is not included with libpq but should
+// be stable across different systems, mostly because AF_INET should be stable
+// across different systems.
+#define POSTGRESQL_AF_INET  (AF_INET + 0)
+#define POSTGRESQL_AF_INET6 (AF_INET + 1)
+STATIC_ASSERT(POSTGRESQL_AF_INET  == 2);
+STATIC_ASSERT(POSTGRESQL_AF_INET6 == 3);
 
 // IMPORTANT(fusion): These are the OIDs for a few of built-in data types in
 // PostgreSQL. They're taken from `catalog/pg_type_d.h` which is not included
@@ -81,16 +98,20 @@ static T *ParamAlloc(ParamBuffer *Params, int Count){
 }
 
 static void ParamBegin(ParamBuffer *Params, int MaxParams, int PreferredFormat){
-	ASSERT(MaxParams > 0);
-
 	// NOTE(fusion): Reset arena.
 	memset(Params->Arena, 0, sizeof(Params->Arena));
 	Params->ArenaPos = 0;
 
 	// NOTE(fusion): Reset params.
-	Params->Values = ParamAlloc<const char*>(Params, MaxParams);
-	Params->Lengths = ParamAlloc<int>(Params, MaxParams);
-	Params->Formats = ParamAlloc<int>(Params, MaxParams);
+	if(MaxParams > 0){
+		Params->Values = ParamAlloc<const char*>(Params, MaxParams);
+		Params->Lengths = ParamAlloc<int>(Params, MaxParams);
+		Params->Formats = ParamAlloc<int>(Params, MaxParams);
+	}else{
+		Params->Values = NULL;
+		Params->Lengths = NULL;
+		Params->Formats = NULL;
+	}
 	Params->NumParams = 0;
 	Params->MaxParams = MaxParams;
 	Params->PreferredFormat = PreferredFormat;
@@ -136,7 +157,7 @@ static void ParamInteger(ParamBuffer *Params, int Value){
 		BufferWrite32BE(Data, (uint32)Value);
 		InsertBinaryParam(Params, Data, 4);
 	}else{
-		char Text[16] = {};
+		char Text[16];
 		StringBufFormat(Text, "%d", Value);
 		InsertTextParam(Params, Text);
 	}
@@ -150,6 +171,41 @@ static void ParamText(ParamBuffer *Params, const char *Text){
 static void ParamByteA(ParamBuffer *Params, const uint8 *Data, int Length){
 	// TODO(fusion): Always use BINARY format?
 	InsertBinaryParam(Params, Data, Length);
+}
+
+static void ParamIPAddress(ParamBuffer *Params, int IPAddress){
+	if(Params->PreferredFormat == 1){ // BINARY FORMAT
+		uint8 Data[8];
+		Data[0] = POSTGRESQL_AF_INET; // AddressFamily
+		Data[1] = 32;                 // MaskBits
+		Data[2] = 0;                  // IsCIDR
+		Data[3] = 4;                  // AddressSize
+		BufferWrite32BE(Data + 4, (uint32)IPAddress);
+		InsertBinaryParam(Params, Data, 8);
+	}else{
+		char Text[16];
+		StringBufFormat(Text, "%d.%d.%d.%d",
+				((IPAddress >> 24) & 0xFF),
+				((IPAddress >> 16) & 0xFF),
+				((IPAddress >>  8) & 0xFF),
+				((IPAddress >>  0) & 0xFF));
+		InsertTextParam(Params, Text);
+	}
+}
+
+static void ParamTimestamp(ParamBuffer *Params, int Timestamp){
+	if(Params->PreferredFormat == 1){ // BINARY FORMAT
+		// NOTE(fusion): See `POSTGRESQL_EPOCH`.
+		uint8 Data[8];
+		int64 PGTimestamp = (int64)(Timestamp - POSTGRESQL_EPOCH) * 1000000;
+		BufferWrite64BE(Data, (uint64)PGTimestamp);
+		InsertBinaryParam(Params, Data, 8);
+	}else{
+		char Text[32];
+		struct tm tm = GetGMTime((time_t)Timestamp);
+		strftime(Text, sizeof(Text), "%Y-%m-%d %H:%M:%S+00", &tm);
+		InsertTextParam(Params, Text);
+	}
 }
 
 // Result Helpers
@@ -385,11 +441,11 @@ static int GetResultIPAddress(PGresult *Result, int Row, int Col){
 				int Size = PQgetlength(Result, Row, Col);
 				const uint8 *Data = (const uint8*)PQgetvalue(Result, Row, Col);
 				if(Size >= 4){
-					int AddressType = (int)Data[0]; // 0x02 for IPV4, 0x03 for IPV6
-					// Data[1]; // mask bits
-					// Data[2]; // always ZERO for INET, always ONE for CIDR
+					int AddressFamily = (int)Data[0];
+					// Data[1]; // MaskBits
+					// Data[2]; // IsCIDR
 					int AddressSize = (int)Data[3];
-					if(AddressType == 2 && AddressSize == 4 && Size >= 8){
+					if(AddressFamily == POSTGRESQL_AF_INET && AddressSize == 4 && Size >= 8){
 						IPAddress = (int)BufferRead32BE(Data + 4);
 					}else{
 						LOG_ERR("CIDR/INET column (%d) %s doesn't contain IPV4 address",
@@ -433,18 +489,22 @@ static bool ParseTimestamp(int *Dest, const char *String){
 	}
 
 	// NOTE(fusion): Parse optional timezone.
-	int TimezoneOffset = 0;
-	if(Rem[0] == '-' || Rem[0] == '+'){
-		if(isdigit(Rem[1]) && isdigit(Rem[2])){
-			TimezoneOffset = (Rem[1] - '0') * 10
-							+ (Rem[2] - '0');
-			if(Rem[0] == '+'){
-				TimezoneOffset = -TimezoneOffset;
-			}
+	int GMTOffset = 0;
+	if((Rem[0] == '-' || Rem[0] == '+') && isdigit(Rem[1]) && isdigit(Rem[2])){
+		// NOTE(fusion): Hours.
+		GMTOffset += ((Rem[1] - '0') * 10 + (Rem[2] - '0')) * 3600;
+
+		// NOTE(fusion): Optional minutes.
+		if(isdigit(Rem[3]) && isdigit(Rem[4])){
+			GMTOffset += ((Rem[3] - '0') * 10 + (Rem[4] - '0')) * 60;
+		}
+
+		if(Rem[0] == '+'){
+			GMTOffset = -GMTOffset;
 		}
 	}
 
-	*Dest = (int)timegm(&tm) + TimezoneOffset * 3600;
+	*Dest = (int)timegm(&tm) + GMTOffset;
 	return true;
 }
 
@@ -490,12 +550,9 @@ static int GetResultTimestamp(PGresult *Result, int Row, int Col){
 			case TIMESTAMPOID:
 			case TIMESTAMPTZOID:{
 				ASSERT(PQgetlength(Result, Row, Col) == 8);
-				// IMPORTANT(fusion): The timestamp used by PostgreSQL is the number
-				// of microseconds since 2000-01-01 00:00:00, with negative values
-				// for timestamps before it.
-				constexpr int64 PGEpoch = 946692000; // 2000-01-01 00:00:00
+				// NOTE(fusion): See `POSTGRESQL_EPOCH`.
 				int64 PGTimestamp = (int64)BufferRead64BE((const uint8*)PQgetvalue(Result, Row, Col));
-				int64 Timestamp64 = ((PGTimestamp / 1000000) + PGEpoch);
+				int64 Timestamp64 = ((PGTimestamp / 1000000) + POSTGRESQL_EPOCH);
 				if(Timestamp64 < INT_MIN){
 					Timestamp = INT_MIN;
 				}else if(Timestamp64 > INT_MAX){
@@ -605,10 +662,10 @@ void DeleteStatementCache(TDatabase *Database){
 			}
 		}
 
-		// NOTE(fusion): This function would usually be called along with `PQreset`
-		// or `PQfinish` but it's probably a good idea to close all prepared statements
-		// if the connection is still going. There is no libpq wrapper but we can
-		// execute `DEALLOCATE ALL`.
+		// NOTE(fusion): This function would usually be called along with `PQreset` or
+		// `PQfinish` but it's probably a good idea to close all prepared statements if
+		// the connection is still going. There is no libpq wrapper but we can execute
+		// `DEALLOCATE ALL`.
 		if(PQstatus(Database->Handle) == CONNECTION_OK){
 			if(!ExecInternal(Database, "DEALLOCATE ALL")){
 				LOG_WARN("Failed to close all prepared statements");
@@ -621,11 +678,18 @@ void DeleteStatementCache(TDatabase *Database){
 	}
 }
 
-// IMPORTANT(fusion): Even though it is possible to declare parameter types with
-// OIDs, it is simpler to use explicit casts such as `$1::INTEGER` to enforce types.
-// It also makes so all relevant information about the query is packed into `Text`
-// so we don't need to track anything else to ensure statements with different
-// types are kept separate.
+// IMPORTANT(fusion): Even though it is possible to declare parameter types
+// with OIDs, it is simpler to use explicit casts such as `$1::INTEGER` to
+// enforce types. It also makes so all relevant information about the query
+// is packed into `Text` so we don't need to track anything else to ensure
+// queries with with different types are kept separate.
+//  Keep in mind that using the same parameter multiple times with different
+// explicit type casts will make so only the first one is used when inferring
+// the actual parameter type. Others are considered casts from it.
+//  For example, `SELECT $1::TIMESTAMP, $1::TIMESTAMPTZ` will make so $1 is
+// inferred as `TIMESTAMP`, so `$1::TIMESTAMPTZ` will actually be a cast from
+// `TIMESTAMP` into `TIMESTAMPTZ`, which will most likely yield unexpected
+// results.
 const char *PrepareQuery(TDatabase *Database, const char *Text){
 	ASSERT(Database != NULL);
 	EnsureStatementCache(Database);
@@ -827,6 +891,36 @@ TDatabase *DatabaseOpen(void){
 		DatabaseClose(Database);
 		return NULL;
 	}
+
+#if 1
+	{
+		// TODO(fusion): REMOVE. This was for testing TIMESTAMP input/output, to make
+		// sure they were consistent across different formats (text/binary).
+		const char *Stmt = PrepareQuery(Database, "SELECT $1::TIMESTAMP, $2::TIMESTAMPTZ");
+		ASSERT(Stmt != NULL);
+
+		int Timestamp = (int)time(NULL);
+		LOG("TIMESTAMP: %d", Timestamp);
+
+		for(int i = 0; i <= 1; i += 1)
+		for(int j = 0; j <= 1; j += 1){
+			LOG("TEXT (%d, %d)", i, j);
+			ParamBuffer Params;
+			ParamBegin(&Params, 2, i);
+			ParamTimestamp(&Params, Timestamp);
+			ParamTimestamp(&Params, Timestamp);
+			PGresult *Result = PQexecPrepared(Database->Handle, Stmt, Params.NumParams,
+										Params.Values, Params.Lengths, Params.Formats, j);
+			AutoResultClear ResultGuard(Result);
+			if(PQresultStatus(Result) == PGRES_TUPLES_OK){
+				LOG("0: %d", GetResultTimestamp(Result, 0, 0));
+				LOG("1: %d", GetResultTimestamp(Result, 0, 1));
+			}else{
+				LOG_ERR("Failed to execute query: %s", PQerrorMessage(Database->Handle));
+			}
+		}
+	}
+#endif
 
 	return Database;
 }
