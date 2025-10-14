@@ -21,6 +21,7 @@
 #define TEXTOID 25
 #define FLOAT4OID 700
 #define FLOAT8OID 701
+#define CIDROID 650
 #define INETOID 869
 #define VARCHAROID 1043
 #define DATEOID 1082
@@ -43,7 +44,115 @@ struct TDatabase{
 	TCachedStatement *CachedStatements;
 };
 
-// Internal Helpers
+// Param Buffer
+//==============================================================================
+struct ParamBuffer{
+	const char **Values;
+	int *Lengths;
+	int *Formats;
+	int NumParams;
+	int MaxParams;
+	int PreferredFormat;
+
+	// NOTE(fusion): 8KB should be more than enough for all case scenarios. We'll
+	// know if it's not.
+	int ArenaPos;
+	uint8 Arena[KB(8)];
+};
+
+static void *ParamAllocImpl(ParamBuffer *Params, int Size, int Alignment){
+	usize ArenaStart = (usize)Params->Arena;
+	usize ArenaEnd   = ArenaStart + sizeof(Params->Arena);
+	usize ArenaPos   = ArenaStart + Params->ArenaPos;
+	usize AllocStart = AlignUp(ArenaPos, Alignment);
+	usize AllocEnd   = AllocStart + Size;
+	if(AllocEnd > ArenaEnd){
+		PANIC("Param buffer is FULL");
+	}
+
+	Params->ArenaPos = (int)(AllocEnd - ArenaStart);
+	return (void*)AllocStart;
+}
+
+template<typename T>
+static T *ParamAlloc(ParamBuffer *Params, int Count){
+	ASSERT(Count > 0);
+	return (T*)ParamAllocImpl(Params, sizeof(T) * Count, alignof(T));
+}
+
+static void ParamBegin(ParamBuffer *Params, int MaxParams, int PreferredFormat){
+	ASSERT(MaxParams > 0);
+
+	// NOTE(fusion): Reset arena.
+	memset(Params->Arena, 0, sizeof(Params->Arena));
+	Params->ArenaPos = 0;
+
+	// NOTE(fusion): Reset params.
+	Params->Values = ParamAlloc<const char*>(Params, MaxParams);
+	Params->Lengths = ParamAlloc<int>(Params, MaxParams);
+	Params->Formats = ParamAlloc<int>(Params, MaxParams);
+	Params->NumParams = 0;
+	Params->MaxParams = MaxParams;
+	Params->PreferredFormat = PreferredFormat;
+}
+
+static void InsertParam(ParamBuffer *Params, const char *Param, int Length, int Format){
+	if(Params->NumParams >= Params->MaxParams){
+		PANIC("Too many parameters specified (%d/%d)",
+				Params->NumParams + 1, Params->MaxParams);
+	}
+
+	Params->Values[Params->NumParams] = Param;
+	Params->Lengths[Params->NumParams] = Length;
+	Params->Formats[Params->NumParams] = Format;
+	Params->NumParams += 1;
+}
+
+static void InsertTextParam(ParamBuffer *Params, const char *Text){
+	int TextLength = (int)strlen(Text);
+	char *Copy = ParamAlloc<char>(Params, TextLength + 1);
+	memcpy(Copy, Text, TextLength + 1);
+	InsertParam(Params, Copy, TextLength, 0);
+}
+
+static void InsertBinaryParam(ParamBuffer *Params, const uint8 *Data, int Length){
+	uint8 *Copy = ParamAlloc<uint8>(Params, Length);
+	memcpy(Copy, Data, Length);
+	InsertParam(Params, (const char*)Copy, Length, 1);
+}
+
+static void ParamBool(ParamBuffer *Params, bool Value){
+	if(Params->PreferredFormat == 1){ // BINARY FORMAT
+		uint8 Data = (Value ? 0x01 : 0x00);
+		InsertBinaryParam(Params, &Data, 1);
+	}else{                            // TEXT FORMAT
+		InsertTextParam(Params, (Value ? "TRUE" : "FALSE"));
+	}
+}
+
+static void ParamInteger(ParamBuffer *Params, int Value){
+	if(Params->PreferredFormat == 1){ // BINARY FORMAT
+		uint8 Data[4];
+		BufferWrite32BE(Data, (uint32)Value);
+		InsertBinaryParam(Params, Data, 4);
+	}else{
+		char Text[16] = {};
+		StringBufFormat(Text, "%d", Value);
+		InsertTextParam(Params, Text);
+	}
+}
+
+static void ParamText(ParamBuffer *Params, const char *Text){
+	// NOTE(fusion): Always use TEXT format.
+	InsertTextParam(Params, Text);
+}
+
+static void ParamByteA(ParamBuffer *Params, const uint8 *Data, int Length){
+	// TODO(fusion): Always use BINARY format?
+	InsertBinaryParam(Params, Data, Length);
+}
+
+// Result Helpers
 //==============================================================================
 struct AutoResultClear{
 private:
@@ -209,33 +318,206 @@ static const char *GetResultText(PGresult *Result, int Row, int Col){
 }
 
 static int GetResultByteA(PGresult *Result, int Row, int Col, uint8 *Buffer, int BufferSize){
-	int Size = 0;
+	int Size = -1;
 	int Format = PQfformat(Result, Col);
 	ASSERT(Format == 0 || Format == 1);
 	if(Format == 0){       // TEXT FORMAT
 		const char *String = PQgetvalue(Result, Row, Col);
-		if(String[0] != '\\' && String[1] != 'x'){
+		if(String[0] == '\\' && String[1] == 'x'){
+			Size = ParseHexString(Buffer, BufferSize, String + 2);
+		}else{
 			LOG_ERR("Column (%d) %s (OID %d) doesn't contain a valid BYTEA literal",
 					Col, PQfname(Result, Col), PQftype(Result, Col));
-			return -1;
-		}
-
-		Size = ParseHexString(Buffer, BufferSize, String + 2);
-		if(Size == -1){
-			return -1;
 		}
 	}else if(Format == 1){ // BINARY FORMAT
 		Size = PQgetlength(Result, Row, Col);
-		if(Size > BufferSize){
-			return -1;
+		if(Size > 0 && Size < BufferSize){
+			memcpy(Buffer, PQgetvalue(Result, Row, Col), Size);
 		}
-		memcpy(Buffer, PQgetvalue(Result, Row, Col), Size);
 	}
 
 	ASSERT(Size <= BufferSize);
 	return Size;
 }
 
+static int GetResultIPAddress(PGresult *Result, int Row, int Col){
+	int IPAddress = 0;
+	int Format = PQfformat(Result, Col);
+	Oid Type = PQftype(Result, Col);
+	ASSERT(Format == 0 || Format == 1);
+	if(Format == 0){       // TEXT FORMAT
+		if(!ParseIPAddress(&IPAddress, PQgetvalue(Result, Row, Col))){
+			LOG_ERR("Failed to parse column (%d) %s as IPV4",
+					Col, PQfname(Result, Col));
+		}
+	}else if(Format == 1){ // BINARY FORMAT
+		switch(Type){
+			case INT8OID:{
+				ASSERT(PQgetlength(Result, Row, Col) == 8);
+				int64 Temp = (int64)BufferRead64BE((const uint8*)PQgetvalue(Result, Row, Col));
+				if(Temp < INT_MIN || Temp > INT_MAX){
+					LOG_WARN("Lossy conversion of column (%d) %s from INT8 to IPV4",
+							Col, PQfname(Result, Col));
+				}
+
+				IPAddress = (int)Temp;
+				break;
+			}
+
+			case INT4OID:{
+				ASSERT(PQgetlength(Result, Row, Col) == 4);
+				IPAddress = (int)BufferRead32BE((const uint8*)PQgetvalue(Result, Row, Col));
+				break;
+			}
+
+
+			case TEXTOID:
+			case VARCHAROID:{
+				if(!ParseIPAddress(&IPAddress, PQgetvalue(Result, Row, Col))){
+					LOG_ERR("Failed to convert column (%d) %s from TEXT to IPV4",
+							Col, PQfname(Result, Col));
+				}
+				break;
+			}
+
+			case CIDROID:
+			case INETOID:{
+				int Size = PQgetlength(Result, Row, Col);
+				const uint8 *Data = (const uint8*)PQgetvalue(Result, Row, Col);
+				if(Size >= 4){
+					int AddressType = (int)Data[0]; // 0x02 for IPV4, 0x03 for IPV6
+					// Data[1]; // mask bits
+					// Data[2]; // always ZERO for INET, always ONE for CIDR
+					int AddressSize = (int)Data[3];
+					if(AddressType == 2 && AddressSize == 4 && Size >= 8){
+						IPAddress = (int)BufferRead32BE(Data + 4);
+					}else{
+						LOG_ERR("CIDR/INET column (%d) %s doesn't contain IPV4 address",
+								Col, PQfname(Result, Col));
+					}
+				}else{
+					LOG_ERR("CIDR/INET column (%d) %s has unexpected binary format",
+							Col, PQfname(Result, Col));
+				}
+				break;
+			}
+
+			default:{
+				LOG_ERR("Column (%d) %s has OID %d which is not convertible to IPV4",
+						Col, PQfname(Result, Col), Type);
+				break;
+			}
+		}
+	}
+	return IPAddress;
+
+}
+
+static bool ParseTimestamp(int *Dest, const char *String){
+	// TODO(fusion): I don't think this function exists on Windows but neither
+	// are we running on Windows so does it even matter? There might be better
+	// ways to properly parse this timestamp format.
+	struct tm tm = {};
+	const char *Rem = strptime(String, "%Y-%m-%d %H:%M:%S", &tm);
+	if(Rem == NULL){
+		LOG_ERR("Invalid timestamp format \"%s\"", String);
+		return false;
+	}
+
+	// NOTE(fusion): Skip optional milliseconds/microseconds.
+	if(Rem[0] == '.'){
+		Rem += 1;
+		while(isdigit(Rem[0])){
+			Rem += 1;
+		}
+	}
+
+	// NOTE(fusion): Parse optional timezone.
+	int TimezoneOffset = 0;
+	if(Rem[0] == '-' || Rem[0] == '+'){
+		if(isdigit(Rem[1]) && isdigit(Rem[2])){
+			TimezoneOffset = (Rem[1] - '0') * 10
+							+ (Rem[2] - '0');
+			if(Rem[0] == '+'){
+				TimezoneOffset = -TimezoneOffset;
+			}
+		}
+	}
+
+	*Dest = (int)timegm(&tm) + TimezoneOffset * 3600;
+	return true;
+}
+
+static int GetResultTimestamp(PGresult *Result, int Row, int Col){
+	int Timestamp = 0;
+	int Format = PQfformat(Result, Col);
+	Oid Type = PQftype(Result, Col);
+	ASSERT(Format == 0 || Format == 1);
+	if(Format == 0){       // TEXT FORMAT
+		if(!ParseTimestamp(&Timestamp, PQgetvalue(Result, Row, Col))){
+			LOG_ERR("Failed to parse column (%d) %s as TIMESTAMP",
+					Col, PQfname(Result, Col));
+		}
+	}else if(Format == 1){ // BINARY FORMAT
+		switch(Type){
+			case INT8OID:{
+				ASSERT(PQgetlength(Result, Row, Col) == 8);
+				int64 Temp = (int64)BufferRead64BE((const uint8*)PQgetvalue(Result, Row, Col));
+				if(Temp < INT_MIN || Temp > INT_MAX){
+					LOG_WARN("Lossy conversion of column (%d) %s from INT8 to TIMESTAMP",
+							Col, PQfname(Result, Col));
+				}
+
+				Timestamp = (int)Temp;
+				break;
+			}
+
+			case INT4OID:{
+				ASSERT(PQgetlength(Result, Row, Col) == 4);
+				Timestamp = (int)BufferRead32BE((const uint8*)PQgetvalue(Result, Row, Col));
+				break;
+			}
+
+			case TEXTOID:
+			case VARCHAROID:{
+				if(!ParseTimestamp(&Timestamp, PQgetvalue(Result, Row, Col))){
+					LOG_ERR("Failed to convert column (%d) %s from TEXT to TIMESTAMP",
+							Col, PQfname(Result, Col));
+				}
+				break;
+			}
+
+			case TIMESTAMPOID:
+			case TIMESTAMPTZOID:{
+				ASSERT(PQgetlength(Result, Row, Col) == 8);
+				// IMPORTANT(fusion): The timestamp used by PostgreSQL is the number
+				// of microseconds since 2000-01-01 00:00:00, with negative values
+				// for timestamps before it.
+				constexpr int64 PGEpoch = 946692000; // 2000-01-01 00:00:00
+				int64 PGTimestamp = (int64)BufferRead64BE((const uint8*)PQgetvalue(Result, Row, Col));
+				int64 Timestamp64 = ((PGTimestamp / 1000000) + PGEpoch);
+				if(Timestamp64 < INT_MIN){
+					Timestamp = INT_MIN;
+				}else if(Timestamp64 > INT_MAX){
+					Timestamp = INT_MAX;
+				}else{
+					Timestamp = (int)Timestamp64;
+				}
+				break;
+			}
+
+			default:{
+				LOG_ERR("Column (%d) %s has OID %d which is not convertible to TIMESTAMP",
+						Col, PQfname(Result, Col), Type);
+				break;
+			}
+		}
+	}
+	return Timestamp;
+}
+
+// Internal Helpers
+//==============================================================================
 static bool ExecInternal(TDatabase *Database, const char *Format, ...) ATTR_PRINTF(2, 3);
 static bool ExecInternal(TDatabase *Database, const char *Format, ...){
 	va_list ap;
@@ -573,6 +855,7 @@ int DatabaseMaxConcurrency(void){
 // Primary Tables
 //==============================================================================
 bool GetWorldID(TDatabase *Database, const char *World, int *WorldID){
+	ASSERT(Database != NULL && World != NULL && WorldID != NULL);
 	const char *Stmt = PrepareQuery(Database,
 			"SELECT WorldID FROM Worlds WHERE Name = $1::TEXT");
 	if(Stmt == NULL){
@@ -583,13 +866,13 @@ bool GetWorldID(TDatabase *Database, const char *World, int *WorldID){
 	//	TODO(fusion): In this specific case it doesn't make a difference but
 	// we'll probably need some helper struct to organize query parameters.
 	// It would have an internal buffer which would be used as an arena.
-	//PGParams Params(1);
-	//Params.PushText(World);
-	//Params.PushX(...); // PANIC: Too many parameters pushed...
-	//PGResult *Result = PQexecPrepared(Database->Handle, Stmt, Params.Count,
-	//		Params.Values, Params.Lengths, Params.Formats, 1);
+	//ParamBuffer Params = {};
+	//ParamBegin(&Params, 1, 1);
+	//ParamText(&Params, World);
+	//PGresult *Result = PQexecPrepared(Database->Handle, Stmt, Params.NumParams,
+	//						Params.Values, Params.Lengths, Params.Formats, 1);
 
-	const char *ParamValues[] = {World};
+	const char *ParamValues[] = { World };
 	PGresult *Result = PQexecPrepared(Database->Handle, Stmt, 1, ParamValues, NULL, NULL, 1);
 	AutoResultClear ResultGuard(Result);
 	if(PQresultStatus(Result) != PGRES_TUPLES_OK){
@@ -602,11 +885,79 @@ bool GetWorldID(TDatabase *Database, const char *World, int *WorldID){
 }
 
 bool GetWorlds(TDatabase *Database, DynamicArray<TWorld> *Worlds){
-	return false;
+	ASSERT(Database != NULL && Worlds != NULL);
+	const char *Stmt = PrepareQuery(Database,
+			"WITH N (WorldID, NumPlayers) AS ("
+				"SELECT WorldID, COUNT(*) FROM OnlineCharacters GROUP BY WorldID"
+			")"
+			" SELECT W.Name, W.Type, COALESCE(N.NumPlayers, 0), W.MaxPlayers,"
+				" W.OnlineRecord, W.OnlineRecordTimestamp"
+			" FROM Worlds AS W"
+			" LEFT JOIN N ON W.WorldID = N.WorldID");
+	if(Stmt == NULL){
+		LOG_ERR("Failed to prepare query");
+		return false;
+	}
+
+	PGresult *Result = PQexecPrepared(Database->Handle, Stmt, 0, NULL, NULL, NULL, 1);
+	AutoResultClear ResultGuard(Result);
+	if(PQresultStatus(Result) != PGRES_TUPLES_OK){
+		LOG_ERR("Failed to execute query: %s", PQerrorMessage(Database->Handle));
+		return false;
+	}
+
+	int NumRows = PQntuples(Result);
+	for(int Row = 0; Row < NumRows; Row += 1){
+		TWorld World = {};
+		StringBufCopy(World.Name, GetResultText(Result, Row, 0));
+		World.Type = GetResultInt(Result, Row, 1);
+		World.NumPlayers = GetResultInt(Result, Row, 2);
+		World.MaxPlayers = GetResultInt(Result, Row, 3);
+		World.OnlineRecord = GetResultInt(Result, Row, 4);
+		World.OnlineRecordTimestamp = GetResultTimestamp(Result, Row, 5);
+		Worlds->Push(World);
+	}
+
+	return true;
 }
 
 bool GetWorldConfig(TDatabase *Database, int WorldID, TWorldConfig *WorldConfig){
-	return false;
+	ASSERT(Database != NULL && WorldConfig != NULL);
+	const char *Stmt = PrepareQuery(Database,
+			"SELECT Type, RebootTime, Host, Port, MaxPlayers,"
+				" PremiumPlayerBuffer, MaxNewbies, PremiumNewbieBuffer"
+			" FROM Worlds WHERE WorldID = $1::INTEGER");
+	if(Stmt == NULL){
+		LOG_ERR("Failed to prepare query");
+		return false;
+	}
+
+	ParamBuffer Params = {};
+	ParamBegin(&Params, 1, 1);
+	ParamInteger(&Params, WorldID);
+	PGresult *Result = PQexecPrepared(Database->Handle, Stmt, Params.NumParams,
+							Params.Values, Params.Lengths, Params.Formats, 1);
+	AutoResultClear ResultGuard(Result);
+	if(PQresultStatus(Result) != PGRES_TUPLES_OK){
+		LOG_ERR("Failed to execute query: %s", PQerrorMessage(Database->Handle));
+		return false;
+	}
+
+	// TODO(fusion): We probably need a way to differentiate a failure from an
+	// empty result set.
+	memset(WorldConfig, 0, sizeof(TWorldConfig));
+	if(PQntuples(Result) > 0){
+		WorldConfig->Type = GetResultInt(Result, 0, 0);
+		WorldConfig->RebootTime = GetResultInt(Result, 0, 1);
+		StringBufCopy(WorldConfig->HostName, GetResultText(Result, 0, 2));
+		WorldConfig->Port = GetResultInt(Result, 0, 3);
+		WorldConfig->MaxPlayers = GetResultInt(Result, 0, 4);
+		WorldConfig->PremiumPlayerBuffer = GetResultInt(Result, 0, 5);
+		WorldConfig->MaxNewbies = GetResultInt(Result, 0, 6);
+		WorldConfig->PremiumNewbieBuffer = GetResultInt(Result, 0, 7);
+	}
+
+	return true;
 }
 
 bool AccountExists(TDatabase *Database, int AccountID, const char *Email, bool *Result){

@@ -208,6 +208,18 @@ inline bool AtomicCompareExchange(AtomicInt *Ptr, int *Expected, int Desired){
 #	error "Atomics not implemented for compiler."
 #endif
 
+// Memory Utility
+//==============================================================================
+inline usize AlignUp(usize Size, usize Alignment){
+	ASSERT(ISPOW2(Alignment));
+	return Size + ((0 - Size) & (Alignment - 1));
+}
+
+inline usize AlignDown(usize Size, usize Alignment){
+	ASSERT(ISPOW2(Alignment));
+	return Size - (Size & (Alignment - 1));
+}
+
 // Buffer Utility
 //==============================================================================
 inline uint8 BufferRead8(const uint8 *Buffer){
