@@ -207,6 +207,59 @@ static void ParamTimestamp(ParamBuffer *Params, int Timestamp){
 	}
 }
 
+static void ParamInterval(ParamBuffer *Params, int Interval){
+	int OneDay  = 60 * 60 * 24;
+	int Years   = (Interval / (OneDay * 365)); Interval -= Years * (OneDay * 365);
+	int Months  = (Interval / (OneDay * 30));  Interval -= Months * (OneDay * 30);
+	int Days    = (Interval / OneDay);         Interval -= Days * OneDay;
+	int Seconds = Interval;                    Interval -= Seconds;
+
+	if(Params->PreferredFormat == 1){ // BINARY FORMAT
+		uint8 Data[16];
+		int64 Microseconds = (int64)Seconds * 1000000;
+		BufferWrite64BE(Data +  0, (uint64)Microseconds);
+		BufferWrite32BE(Data +  8, (uint32)Days);
+		BufferWrite32BE(Data + 12, (uint32)(Months + Years * 12));
+		InsertBinaryParam(Params, Data, 16);
+	}else{
+		StringBuffer<256> Text;
+
+		if(Years != 0){
+			if(!Text.Empty()) Text.Append(" ");
+			Text.FormatAppend("%d years", Years);
+		}
+
+		if(Months != 0){
+			if(!Text.Empty()) Text.Append(" ");
+			Text.FormatAppend("%d mons", Months);
+		}
+
+		if(Days != 0){
+			if(!Text.Empty()) Text.Append(" ");
+			Text.FormatAppend("%d days", Days);
+		}
+
+		if(Seconds != 0){
+			bool Negative = false;
+			if(Seconds < 0){
+				Negative = true;
+				Seconds = -Seconds;
+			}
+
+			int OneMinute = 60;
+			int Hours     = (Seconds / (OneMinute * 60)); Seconds -= Hours * (OneMinute * 60);
+			int Minutes   = (Seconds / OneMinute);        Seconds -= Minutes * OneMinute;
+
+			if(!Text.Empty()) Text.Append(" ");
+			if(Negative) Text.Append("-");
+			Text.FormatAppend("%02d:%02d:%02d", Hours, Minutes, Seconds);
+		}
+
+		ASSERT(!Text.Overflowed());
+		InsertTextParam(Params, Text.CString());
+	}
+}
+
 // Result Helpers
 //==============================================================================
 struct AutoResultClear{
@@ -469,6 +522,8 @@ static int GetResultIPAddress(PGresult *Result, int Row, int Col){
 }
 
 static bool ParseTimestamp(int *Dest, const char *String){
+	ASSERT(Dest != NULL && String != NULL);
+
 	// TODO(fusion): I don't think this function exists on Windows but neither
 	// are we running on Windows so does it even matter? There might be better
 	// ways to properly parse this timestamp format.
@@ -572,7 +627,289 @@ static int GetResultTimestamp(PGresult *Result, int Row, int Col){
 	return Timestamp;
 }
 
-// Internal Helpers
+static void SkipWhitespace(int *Cursor, const char *String){
+	while(isspace(String[*Cursor])){
+		*Cursor += 1;
+	}
+}
+
+static bool SkipNextChar(int Ch, int *Cursor, const char *String){
+	ASSERT(Ch != 0);
+	if(String[*Cursor] != Ch){
+		return false;
+	}
+
+	*Cursor += 1;
+	return true;
+}
+
+static bool ReadNextNumber(int *Dest, int *Cursor, const char *String){
+	SkipWhitespace(Cursor, String);
+
+	bool Negative = false;
+	if(!isdigit(String[*Cursor])){
+		if(String[*Cursor] != '+' && String[*Cursor] != '-'){
+			return false;
+		}
+
+		if(!isdigit(String[*Cursor + 1])){
+			return false;
+		}
+
+		if(String[*Cursor] == '-'){
+			Negative = true;
+		}
+
+		*Cursor += 1;
+	}
+
+	int Number = 0;
+	while(isdigit(String[*Cursor])){
+		Number = (Number * 10) + (String[*Cursor] - '0');
+		*Cursor += 1;
+	}
+
+	if(Negative){
+		Number = -Number;
+	}
+
+	*Dest = Number;
+	return true;
+}
+
+static bool ReadNextWord(char *Dest, int DestCapacity, int *Cursor, const char *String){
+	ASSERT(DestCapacity > 0);
+
+	SkipWhitespace(Cursor, String);
+	if(!isalpha(String[*Cursor])){
+		return false;
+	}
+
+	int WritePos = 0;
+	while(isalpha(String[*Cursor])){
+		if(WritePos < DestCapacity){
+			Dest[WritePos] = String[*Cursor];
+			WritePos += 1;
+		}
+		*Cursor += 1;
+	}
+
+	bool Result = (WritePos < DestCapacity);
+	if(Result){
+		Dest[WritePos] = 0;
+	}else{
+		Dest[DestCapacity - 1] = 0;
+	}
+
+	return Result;
+}
+
+static bool ParseInterval(int *Dest, const char *String){
+	// TODO(fusion): This is rather rudimentary but should work at least with
+	// the values that the server is currently returning. I also assume this
+	// is stable enough or it would break other client libraries as well.
+	ASSERT(Dest != NULL && String != NULL);
+	int Interval = 0;
+	int Cursor = 0;
+	bool Negate = false;
+	while(true){
+		SkipWhitespace(&Cursor, String);
+		if(String[Cursor] == 0){
+			break;
+		}
+
+		int Number;
+		if(!ReadNextNumber(&Number, &Cursor, String)){
+			// "Expected number"
+			return false;
+		}
+
+		if(SkipNextChar(':', &Cursor, String)){
+			int Minutes, Seconds;
+			if(!ReadNextNumber(&Minutes, &Cursor, String)
+			|| !SkipNextChar(':', &Cursor, String)
+			|| !ReadNextNumber(&Seconds, &Cursor, String)){
+				// "Expected HH:MM:SS.FFFFFF"
+				return false;
+			}
+
+			if(Minutes < 0 || Minutes > 59){
+				// "Expected minutes to be within [0, 59]"
+				return false;
+			}
+
+			if(Seconds < 0 || Seconds > 59){
+				// "Expected seconds to be within [0, 59]"
+				return false;
+			}
+
+			// NOTE(fusion): Parse microseconds but ignore it.
+			if(SkipNextChar('.', &Cursor, String)){
+				int Frac;
+				int PrevCursor = Cursor;
+				if(!ReadNextNumber(&Frac, &Cursor, String)){
+					// "Expected fractional part"
+					return false;
+				}
+
+				int FracDigits = Cursor - PrevCursor;
+				if(FracDigits > 6){
+					// "Too many fractional digits"
+					return false;
+				}
+			}
+
+			Interval += (Number * 3600 + Minutes * 60 + Seconds);
+		}else{
+			char Unit[16];
+			if(!ReadNextWord(Unit, sizeof(Unit), &Cursor, String)){
+				// "Expected unit"
+				return false;
+			}
+
+			// NOTE(fusion): Remove ending 's' to allow for plurals. This probably
+			// doesn't work for "centuries" or "millennia" but we can adjust later.
+			// Not to mention that either a single century or millennium will already
+			// cause an integer overflow.
+			int UnitLength = strlen(Unit);
+			if(UnitLength > 1 && Unit[UnitLength - 1] == 's'){
+				Unit[UnitLength - 1] = 0;
+			}
+
+			if(StringStartsWithCI("microsecond", Unit)){
+				Interval += Number / 1000000;
+			}else if(StringStartsWithCI("millisecond", Unit)){
+				Interval += Number / 1000;
+			}else if(StringStartsWithCI("second", Unit)){
+				Interval += Number;
+			}else if(StringStartsWithCI("minute", Unit)){
+				Interval += Number * 60;
+			}else if(StringStartsWithCI("hour", Unit)){
+				Interval += Number * 60 * 60;
+			}else if(StringStartsWithCI("day", Unit)){
+				Interval += Number * 60 * 60 * 24;
+			}else if(StringStartsWithCI("week", Unit)){
+				Interval += Number * 60 * 60 * 24 * 7;
+			}else if(StringStartsWithCI("month", Unit)){
+				Interval += Number * 60 * 60 * 24 * 30;
+			}else if(StringStartsWithCI("year", Unit)){
+				Interval += Number * 60 * 60 * 24 * 365;
+			}else if(StringStartsWithCI("decade", Unit)){
+				Interval += Number * 60 * 60 * 24 * 365 * 10;
+			}else if(StringStartsWithCI("century", Unit)){
+				Interval += Number * 60 * 60 * 24 * 365 * 100;
+			}else if(StringStartsWithCI("millennium", Unit)){
+				Interval += Number * 60 * 60 * 24 * 365 * 1000;
+			}else{
+				// "Invalid unit"
+				return false;
+			}
+		}
+
+		char Direction[8];
+		if(ReadNextWord(Direction, sizeof(Direction), &Cursor, String)){
+			if(!StringEqCI(Direction, "ago")){
+				// "Invalid interval direction"
+				return false;
+			}
+
+			SkipWhitespace(&Cursor, String);
+			if(String[Cursor] != 0){
+				// "Interval direction is expected only at the very end"
+				return false;
+			}
+
+			Negate = true;
+		}
+	}
+
+	if(Negate){
+		Interval = -Interval;
+	}
+
+	*Dest = Interval;
+	return true;
+}
+
+static int GetResultInterval(PGresult *Result, int Row, int Col){
+	int Interval = 0;
+	int Format = PQfformat(Result, Col);
+	Oid Type = PQftype(Result, Col);
+	ASSERT(Format == 0 || Format == 1);
+	if(Format == 0){       // TEXT FORMAT
+		if(!ParseInterval(&Interval, PQgetvalue(Result, Row, Col))){
+			LOG_ERR("Failed to parse column (%d) %s as INTERVAL",
+					Col, PQfname(Result, Col));
+		}
+	}else if(Format == 1){ // BINARY FORMAT
+		switch(Type){
+			case INT8OID:{
+				ASSERT(PQgetlength(Result, Row, Col) == 8);
+				int64 Temp = (int64)BufferRead64BE((const uint8*)PQgetvalue(Result, Row, Col));
+				if(Temp < INT_MIN || Temp > INT_MAX){
+					LOG_WARN("Lossy conversion of column (%d) %s from INT8 to INTERVAL",
+							Col, PQfname(Result, Col));
+				}
+
+				Interval = (int)Temp;
+				break;
+			}
+
+			case INT4OID:{
+				ASSERT(PQgetlength(Result, Row, Col) == 4);
+				Interval = (int)BufferRead32BE((const uint8*)PQgetvalue(Result, Row, Col));
+				break;
+			}
+
+			case TEXTOID:
+			case VARCHAROID:{
+				if(!ParseInterval(&Interval, PQgetvalue(Result, Row, Col))){
+					LOG_ERR("Failed to convert column (%d) %s from TEXT to INTERVAL",
+							Col, PQfname(Result, Col));
+				}
+				break;
+			}
+
+			case INTERVALOID:{
+				ASSERT(PQgetlength(Result, Row, Col) == 16);
+				const uint8 *Data = (const uint8*)PQgetvalue(Result, Row, Col);
+				int64 Microseconds = (int64)BufferRead64BE(Data + 0);
+				int Days = (int)BufferRead32BE(Data + 8);
+				int Months = (int)BufferRead32BE(Data + 12);
+
+				// NOTE(fusion): Split months into years for better precision. Using 30 days
+				// months will reduce the number of year days to 360.
+				int Years = Months / 12;
+				Months = Months % 12;
+
+				// NOTE(fusion): We just can't support the whole range of intervals
+				// with a simple integer but the vast majority won't need more than
+				// that. Anything else we'll just call "undefined behaviour" lol.
+				int64 Interval64 = (Microseconds / 1000000)
+								+ ((int64)Days * 60 * 60 * 24)
+								+ ((int64)Months * 60 * 60 * 24 * 30)
+								+ ((int64)Years * 60 * 60 * 24 * 365);
+				if(Interval64 < INT_MIN){
+					Interval = INT_MIN;
+				}else if(Interval64 > INT_MAX){
+					Interval = INT_MAX;
+				}else{
+					Interval = (int)Interval64;
+				}
+				break;
+			}
+
+			default:{
+				LOG_ERR("Column (%d) %s has OID %d which is not convertible to INTERVAL",
+						Col, PQfname(Result, Col), Type);
+				break;
+			}
+		}
+	}
+	return Interval;
+}
+
+// Other Helpers
 //==============================================================================
 static bool ExecInternal(TDatabase *Database, const char *Format, ...) ATTR_PRINTF(2, 3);
 static bool ExecInternal(TDatabase *Database, const char *Format, ...){
@@ -891,33 +1228,34 @@ TDatabase *DatabaseOpen(void){
 		return NULL;
 	}
 
-#if 1
+#if 0
 	{
-		// TODO(fusion): REMOVE. This was for testing TIMESTAMP input/output, to make
-		// sure they were consistent across different formats (text/binary).
-		const char *Stmt = PrepareQuery(Database, "SELECT $1::TIMESTAMP, $2::TIMESTAMPTZ");
+		// TODO(fusion): REMOVE. This is for testing query input/output, to make sure
+		// they're consitent across different formats (text/binary).
+		const char *Stmt = PrepareQuery(Database,
+				"SELECT $1::INTERVAL, $2::INTERVAL");
 		ASSERT(Stmt != NULL);
-
-		int Timestamp = (int)time(NULL);
-		LOG("TIMESTAMP: %d", Timestamp);
 
 		for(int i = 0; i <= 1; i += 1)
 		for(int j = 0; j <= 1; j += 1){
 			LOG("TEST (%d, %d)", i, j);
 			ParamBuffer Params;
 			ParamBegin(&Params, 2, i);
-			ParamTimestamp(&Params, Timestamp);
-			ParamTimestamp(&Params, Timestamp);
+			ParamInterval(&Params, 86400 + 3600);
+			ParamInterval(&Params, - 86400 * 4 + 7 * 3600);
 			PGresult *Result = PQexecPrepared(Database->Handle, Stmt, Params.NumParams,
 										Params.Values, Params.Lengths, Params.Formats, j);
 			AutoResultClear ResultGuard(Result);
 			if(PQresultStatus(Result) == PGRES_TUPLES_OK){
-				LOG("0: %d", GetResultTimestamp(Result, 0, 0));
-				LOG("1: %d", GetResultTimestamp(Result, 0, 1));
+				LOG("0: %d", GetResultInterval(Result, 0, 0));
+				LOG("1: %d", GetResultInterval(Result, 0, 1));
 			}else{
 				LOG_ERR("Failed to execute query: %s", PQerrorMessage(Database->Handle));
 			}
 		}
+
+		DatabaseClose(Database);
+		return NULL;
 	}
 #endif
 
@@ -1055,6 +1393,7 @@ bool GetWorldConfig(TDatabase *Database, int WorldID, TWorldConfig *WorldConfig)
 }
 
 bool AccountExists(TDatabase *Database, int AccountID, const char *Email, bool *Exists){
+	ASSERT(Database != NULL && Email != NULL && Exists != NULL);
 	const char *Stmt = PrepareQuery(Database,
 			"SELECT 1 FROM Accounts"
 			" WHERE AccountID = $1::INTEGER OR Email = $2::TEXT");
@@ -1079,24 +1418,152 @@ bool AccountExists(TDatabase *Database, int AccountID, const char *Email, bool *
 	return true;
 }
 
-bool AccountNumberExists(TDatabase *Database, int AccountID, bool *Result){
-	return false;
+bool AccountNumberExists(TDatabase *Database, int AccountID, bool *Exists){
+	ASSERT(Database != NULL && Exists != NULL);
+	const char *Stmt = PrepareQuery(Database,
+			"SELECT 1 FROM Accounts"
+			" WHERE AccountID = $1::INTEGER");
+	if(Stmt == NULL){
+		LOG_ERR("Failed to prepare query");
+		return false;
+	}
+
+	ParamBuffer Params = {};
+	ParamBegin(&Params, 1, 1);
+	ParamInt(&Params, AccountID);
+	PGresult *Result = PQexecPrepared(Database->Handle, Stmt, Params.NumParams,
+							Params.Values, Params.Lengths, Params.Formats, 1);
+	AutoResultClear ResultGuard(Result);
+	if(PQresultStatus(Result) != PGRES_TUPLES_OK){
+		LOG_ERR("Failed to execute query: %s", PQerrorMessage(Database->Handle));
+		return false;
+	}
+
+	*Exists = (PQntuples(Result) > 0);
+	return true;
 }
 
-bool AccountEmailExists(TDatabase *Database, const char *Email, bool *Result){
-	return false;
+bool AccountEmailExists(TDatabase *Database, const char *Email, bool *Exists){
+	ASSERT(Database != NULL && Email != NULL && Exists != NULL);
+	const char *Stmt = PrepareQuery(Database,
+			"SELECT 1 FROM Accounts WHERE Email = $1::TEXT");
+	if(Stmt == NULL){
+		LOG_ERR("Failed to prepare query");
+		return false;
+	}
+
+	ParamBuffer Params = {};
+	ParamBegin(&Params, 1, 1);
+	ParamText(&Params, Email);
+	PGresult *Result = PQexecPrepared(Database->Handle, Stmt, Params.NumParams,
+							Params.Values, Params.Lengths, Params.Formats, 1);
+	AutoResultClear ResultGuard(Result);
+	if(PQresultStatus(Result) != PGRES_TUPLES_OK){
+		LOG_ERR("Failed to execute query: %s", PQerrorMessage(Database->Handle));
+		return false;
+	}
+
+	*Exists = (PQntuples(Result) > 0);
+	return true;
 }
 
 bool CreateAccount(TDatabase *Database, int AccountID, const char *Email, const uint8 *Auth, int AuthSize){
-	return false;
+	ASSERT(Database != NULL && Email != NULL
+			&& Auth != NULL && AuthSize > 0);
+	const char *Stmt = PrepareQuery(Database,
+			"INSERT INTO Accounts (AccountID, Email, Auth)"
+			" VALUES ($1::INTEGER, $2::TEXT, $3::BYTEA)");
+	if(Stmt == NULL){
+		LOG_ERR("Failed to prepare query");
+		return false;
+	}
+
+	ParamBuffer Params = {};
+	ParamBegin(&Params, 3, 1);
+	ParamInt(&Params, AccountID);
+	ParamText(&Params, Email);
+	ParamByteA(&Params, Auth, AuthSize);
+	PGresult *Result = PQexecPrepared(Database->Handle, Stmt, Params.NumParams,
+							Params.Values, Params.Lengths, Params.Formats, 1);
+	AutoResultClear ResultGuard(Result);
+	if(PQresultStatus(Result) != PGRES_COMMAND_OK){
+		LOG_ERR("Failed to execute query: %s", PQerrorMessage(Database->Handle));
+		return false;
+	}
+
+	return true;
 }
 
 bool GetAccountData(TDatabase *Database, int AccountID, TAccount *Account){
-	return false;
+	ASSERT(Database != NULL && Account != NULL);
+	const char *Stmt = PrepareQuery(Database,
+			"SELECT AccountID, Email, Auth,"
+				" (PremiumEnd - CURRENT_TIMESTAMP),"
+				" PendingPremiumDays, Deleted"
+			" FROM Accounts WHERE AccountID = $1::INTEGER");
+	if(Stmt == NULL){
+		LOG_ERR("Failed to prepare query");
+		return false;
+	}
+
+
+	ParamBuffer Params = {};
+	ParamBegin(&Params, 1, 1);
+	ParamInt(&Params, AccountID);
+	PGresult *Result = PQexecPrepared(Database->Handle, Stmt, Params.NumParams,
+							Params.Values, Params.Lengths, Params.Formats, 1);
+	AutoResultClear ResultGuard(Result);
+	if(PQresultStatus(Result) != PGRES_TUPLES_OK){
+		LOG_ERR("Failed to execute query: %s", PQerrorMessage(Database->Handle));
+		return false;
+	}
+
+	memset(Account, 0, sizeof(TAccount));
+	if(PQntuples(Result) > 0){
+		uint8 Auth[sizeof(Account->Auth)];
+		Account->AccountID = GetResultInt(Result, 0, 0);
+		StringBufCopy(Account->Email, GetResultText(Result, 0, 1));
+		if(GetResultByteA(Result, 0, 2, Auth, sizeof(Auth)) == sizeof(Auth)){
+			memcpy(Account->Auth, Auth, sizeof(Auth));
+		}
+		Account->PremiumDays = GetResultInterval(Result, 0, 3);
+		Account->PendingPremiumDays = GetResultInt(Result, 0, 4);
+		Account->Deleted = GetResultBool(Result, 0, 5);
+	}
+
+	return true;
 }
 
 bool GetAccountOnlineCharacters(TDatabase *Database, int AccountID, int *OnlineCharacters){
-	return false;
+	ASSERT(Database != NULL && OnlineCharacters != NULL);
+	const char *Stmt = PrepareQuery(Database,
+			"SELECT COUNT(*) FROM Characters"
+			" WHERE AccountID = $1::INTEGER AND IsOnline != 0");
+	if(Stmt == NULL){
+		LOG_ERR("Failed to prepare query");
+		return false;
+	}
+
+	ParamBuffer Params = {};
+	ParamBegin(&Params, 1, 1);
+	ParamInt(&Params, AccountID);
+	PGresult *Result = PQexecPrepared(Database->Handle, Stmt, Params.NumParams,
+							Params.Values, Params.Lengths, Params.Formats, 1);
+	AutoResultClear ResultGuard(Result);
+	if(PQresultStatus(Result) != PGRES_TUPLES_OK){
+		LOG_ERR("Failed to execute query: %s", PQerrorMessage(Database->Handle));
+		return false;
+	}
+
+	// NOTE(fusion): This is intended. A `SELECT COUNT(*)` query should always
+	// return something.
+	if(PQntuples(Result) == 0){
+		LOG_ERR("Query returned no rows");
+		return false;
+	}
+
+	*OnlineCharacters = GetResultInt(Result, 0, 0);
+	return true;
 }
 
 bool IsCharacterOnline(TDatabase *Database, int CharacterID, bool *Result){

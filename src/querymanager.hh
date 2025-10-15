@@ -156,6 +156,8 @@ int RoundSecondsToDays(int Seconds);
 bool StringEmpty(const char *String);
 bool StringEq(const char *A, const char *B);
 bool StringEqCI(const char *A, const char *B);
+bool StringStartsWith(const char *String, const char *Prefix);
+bool StringStartsWithCI(const char *String, const char *Prefix);
 bool StringCopyN(char *Dest, int DestCapacity, const char *Src, int SrcLength);
 bool StringCopy(char *Dest, int DestCapacity, const char *Src);
 void StringCopyEllipsis(char *Dest, int DestCapacity, const char *Src);
@@ -636,6 +638,114 @@ public:
 	T *end(void) { return m_Data + m_Length; }
 	const T *begin(void) const { return m_Data; }
 	const T *end(void) const { return m_Data + m_Length; }
+};
+
+// String Buffer
+//==============================================================================
+template<int N = KB(2)>
+struct StringBuffer{
+private:
+	STATIC_ASSERT(N > 0);
+	int m_Position;
+	char m_Buffer[N];
+
+public:
+	StringBuffer(void) { Reset(); }
+	StringBuffer(const StringBuffer &Other) = delete;
+	void operator=(const StringBuffer &Other) = delete;
+
+	bool Overflowed(void){ return m_Position >= N; }
+	bool Empty(void){ return m_Position == 0; }
+
+	void Reset(void) {
+		m_Position = 0;
+		m_Buffer[0] = 0;
+	}
+
+	void Assign(const char *String){
+		int StringLength = (int)strlen(String);
+		int CopyLength = StringLength;
+
+		if(CopyLength >= N){
+			CopyLength = (N - 1);
+		}
+
+		if(CopyLength > 0){
+			memcpy(m_Buffer, String, CopyLength);
+		}
+
+		m_Buffer[CopyLength] = 0;
+		m_Position = StringLength;
+	}
+
+	void Format(const char *Format, ...) ATTR_PRINTF(2, 3) {
+		va_list ap;
+		va_start(ap, Format);
+		int Written = vsnprintf(m_Buffer, N, Format, ap);
+		va_end(ap);
+
+		if(Written >= 0){
+			m_Position = Written;
+		}else{
+			m_Position = 0;
+			m_Buffer[0] = 0;
+		}
+	}
+
+	void Append(const char *String){
+		if(m_Position >= (N - 1)){
+			return;
+		}
+
+		int StringLength = (int)strlen(String);
+		int CopyLength = StringLength;
+		int Remainder = (N - m_Position);
+
+		if(CopyLength >= Remainder){
+			CopyLength = (Remainder - 1);
+		}
+
+		if(CopyLength > 0){
+			memcpy(m_Buffer + m_Position, String, CopyLength);
+		}
+
+		m_Buffer[m_Position + CopyLength] = 0;
+		m_Position += StringLength;
+	}
+
+	void FormatAppend(const char *Format, ...) ATTR_PRINTF(2, 3) {
+		if(m_Position >= (N - 1)){
+			return;
+		}
+
+		va_list ap;
+		va_start(ap, Format);
+		int Written = vsnprintf((m_Buffer + m_Position), (N - m_Position), Format, ap);
+		va_end(ap);
+
+		if(Written >= 0){
+			m_Position += Written;
+		}else{
+			m_Buffer[m_Position] = 0;
+		}
+	}
+
+	int Length(void){
+		if(Overflowed()){
+			return (N - 1);
+		}else{
+			return m_Position;
+		}
+	}
+
+	const char *CString(void){
+		if(Overflowed()){
+			m_Buffer[N - 1] = 0;
+		}else{
+			m_Buffer[m_Position] = 0;
+		}
+		return m_Buffer;
+	}
 };
 
 // sha256.cc

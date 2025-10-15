@@ -164,6 +164,28 @@ bool StringEqCI(const char *A, const char *B){
 	}
 }
 
+bool StringStartsWith(const char *String, const char *Prefix){
+	int Index = 0;
+	while(Prefix[Index] != 0){
+		if(String[Index] == 0 || String[Index] != Prefix[Index]){
+			return false;
+		}
+		Index += 1;
+	}
+	return true;
+}
+
+bool StringStartsWithCI(const char *String, const char *Prefix){
+	int Index = 0;
+	while(Prefix[Index] != 0){
+		if(String[Index] == 0 || tolower(String[Index]) != tolower(Prefix[Index])){
+			return false;
+		}
+		Index += 1;
+	}
+	return true;
+}
+
 bool StringCopyN(char *Dest, int DestCapacity, const char *Src, int SrcLength){
 	ASSERT(DestCapacity > 0);
 	bool Result = (SrcLength < DestCapacity);
