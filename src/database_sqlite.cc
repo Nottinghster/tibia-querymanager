@@ -545,8 +545,8 @@ bool GetWorldConfig(TDatabase *Database, int WorldID, TWorldConfig *WorldConfig)
 	return true;
 }
 
-bool AccountExists(TDatabase *Database, int AccountID, const char *Email, bool *Result){
-	ASSERT(Database != NULL && Email != NULL && Result != NULL);
+bool AccountExists(TDatabase *Database, int AccountID, const char *Email, bool *Exists){
+	ASSERT(Database != NULL && Email != NULL && Exists != NULL);
 	sqlite3_stmt *Stmt = PrepareQuery(Database,
 			"SELECT 1 FROM Accounts WHERE AccountID = ?1 OR Email = ?2");
 	if(Stmt == NULL){
@@ -567,12 +567,12 @@ bool AccountExists(TDatabase *Database, int AccountID, const char *Email, bool *
 		return false;
 	}
 
-	*Result = (ErrorCode == SQLITE_ROW);
+	*Exists = (ErrorCode == SQLITE_ROW);
 	return true;
 }
 
-bool AccountNumberExists(TDatabase *Database, int AccountID, bool *Result){
-	ASSERT(Database != NULL && Result != NULL);
+bool AccountNumberExists(TDatabase *Database, int AccountID, bool *Exists){
+	ASSERT(Database != NULL && Exists != NULL);
 	sqlite3_stmt *Stmt = PrepareQuery(Database,
 			"SELECT 1 FROM Accounts WHERE AccountID = ?1");
 	if(Stmt == NULL){
@@ -592,12 +592,12 @@ bool AccountNumberExists(TDatabase *Database, int AccountID, bool *Result){
 		return false;
 	}
 
-	*Result = (ErrorCode == SQLITE_ROW);
+	*Exists = (ErrorCode == SQLITE_ROW);
 	return true;
 }
 
-bool AccountEmailExists(TDatabase *Database, const char *Email, bool *Result){
-	ASSERT(Database != NULL && Email != NULL && Result != NULL);
+bool AccountEmailExists(TDatabase *Database, const char *Email, bool *Exists){
+	ASSERT(Database != NULL && Email != NULL && Exists != NULL);
 	sqlite3_stmt *Stmt = PrepareQuery(Database,
 			"SELECT 1 FROM Accounts WHERE Email = ?1");
 	if(Stmt == NULL){
@@ -617,7 +617,7 @@ bool AccountEmailExists(TDatabase *Database, const char *Email, bool *Result){
 		return false;
 	}
 
-	*Result = (ErrorCode == SQLITE_ROW);
+	*Exists = (ErrorCode == SQLITE_ROW);
 	return true;
 }
 
@@ -714,8 +714,8 @@ bool GetAccountOnlineCharacters(TDatabase *Database, int AccountID, int *OnlineC
 	return true;
 }
 
-bool IsCharacterOnline(TDatabase *Database, int CharacterID, bool *Result){
-	ASSERT(Database != NULL && Result != NULL);
+bool IsCharacterOnline(TDatabase *Database, int CharacterID, bool *Online){
+	ASSERT(Database != NULL && Online != NULL);
 	sqlite3_stmt *Stmt = PrepareQuery(Database,
 			"SELECT IsOnline FROM Characters WHERE CharacterID = ?1");
 	if(Stmt == NULL){
@@ -735,8 +735,7 @@ bool IsCharacterOnline(TDatabase *Database, int CharacterID, bool *Result){
 		return false;
 	}
 
-	*Result = (ErrorCode == SQLITE_ROW)
-			&& (sqlite3_column_int(Stmt, 0) != 0);
+	*Online = (ErrorCode == SQLITE_ROW) && (sqlite3_column_int(Stmt, 0) != 0);
 	return true;
 }
 
@@ -848,8 +847,8 @@ bool GetCharacterSummaries(TDatabase *Database, int AccountID, DynamicArray<TCha
 	return true;
 }
 
-bool CharacterNameExists(TDatabase *Database, const char *Name, bool *Result){
-	ASSERT(Database != NULL && Result != NULL);
+bool CharacterNameExists(TDatabase *Database, const char *Name, bool *Exists){
+	ASSERT(Database != NULL && Exists != NULL);
 	sqlite3_stmt *Stmt = PrepareQuery(Database,
 			"SELECT 1 FROM Characters WHERE Name = ?1");
 	if(Stmt == NULL){
@@ -869,7 +868,7 @@ bool CharacterNameExists(TDatabase *Database, const char *Name, bool *Result){
 		return false;
 	}
 
-	*Result = (ErrorCode == SQLITE_ROW);
+	*Exists = (ErrorCode == SQLITE_ROW);
 	return false;
 }
 
@@ -1018,8 +1017,8 @@ bool GetCharacterProfile(TDatabase *Database, const char *CharacterName, TCharac
 	return true;
 }
 
-bool GetCharacterRight(TDatabase *Database, int CharacterID, const char *Right, bool *Result){
-	ASSERT(Database != NULL && Right != NULL && Result != NULL);
+bool GetCharacterRight(TDatabase *Database, int CharacterID, const char *Right, bool *HasRight){
+	ASSERT(Database != NULL && Right != NULL && HasRight != NULL);
 	sqlite3_stmt *Stmt = PrepareQuery(Database,
 			"SELECT 1 FROM CharacterRights"
 			" WHERE CharacterID = ?1 AND Right = ?2");
@@ -1041,7 +1040,7 @@ bool GetCharacterRight(TDatabase *Database, int CharacterID, const char *Right, 
 		return false;
 	}
 
-	*Result = (ErrorCode == SQLITE_ROW);
+	*HasRight = (ErrorCode == SQLITE_ROW);
 	return true;
 }
 
@@ -1074,8 +1073,8 @@ bool GetCharacterRights(TDatabase *Database, int CharacterID, DynamicArray<TChar
 	return true;
 }
 
-bool GetGuildLeaderStatus(TDatabase *Database, int WorldID, int CharacterID, bool *Result){
-	ASSERT(Database != NULL && Result != NULL);
+bool GetGuildLeaderStatus(TDatabase *Database, int WorldID, int CharacterID, bool *GuildLeader){
+	ASSERT(Database != NULL && GuildLeader != NULL);
 	// NOTE(fusion): Same as `DecrementIsOnline`.
 	sqlite3_stmt *Stmt = PrepareQuery(Database,
 			"SELECT Guild, Rank FROM Characters"
@@ -1098,12 +1097,12 @@ bool GetGuildLeaderStatus(TDatabase *Database, int WorldID, int CharacterID, boo
 		return false;
 	}
 
-	*Result = false;
+	*GuildLeader = false;
 	if(ErrorCode == SQLITE_ROW){
 		const char *Guild = (const char*)sqlite3_column_text(Stmt, 0);
 		const char *Rank = (const char*)sqlite3_column_text(Stmt, 1);
 		if(Guild != NULL && !StringEmpty(Guild) && Rank != NULL && StringEqCI(Rank, "Leader")){
-			*Result = true;
+			*GuildLeader = true;
 		}
 	}
 
@@ -1393,8 +1392,8 @@ bool GetBuddies(TDatabase *Database, int WorldID, int AccountID, DynamicArray<TA
 	return true;
 }
 
-bool GetWorldInvitation(TDatabase *Database, int WorldID, int CharacterID, bool *Result){
-	ASSERT(Database != NULL && Result != NULL);
+bool GetWorldInvitation(TDatabase *Database, int WorldID, int CharacterID, bool *Invited){
+	ASSERT(Database != NULL && Invited != NULL);
 	sqlite3_stmt *Stmt = PrepareQuery(Database,
 		"SELECT 1 FROM WorldInvitations"
 		" WHERE WorldID = ?1 AND CharacterID = ?2");
@@ -1416,7 +1415,7 @@ bool GetWorldInvitation(TDatabase *Database, int WorldID, int CharacterID, bool 
 		return false;
 	}
 
-	*Result = (ErrorCode == SQLITE_ROW);
+	*Invited = (ErrorCode == SQLITE_ROW);
 	return true;
 }
 
@@ -1446,8 +1445,8 @@ bool InsertLoginAttempt(TDatabase *Database, int AccountID, int IPAddress, bool 
 	return true;
 }
 
-bool GetAccountFailedLoginAttempts(TDatabase *Database, int AccountID, int TimeWindow, int *Result){
-	ASSERT(Database != NULL);
+bool GetAccountFailedLoginAttempts(TDatabase *Database, int AccountID, int TimeWindow, int *FailedAttempts){
+	ASSERT(Database != NULL && FailedAttempts != NULL);
 	sqlite3_stmt *Stmt = PrepareQuery(Database,
 			"SELECT COUNT(*) FROM LoginAttempts"
 			" WHERE AccountID = ?1 AND Timestamp >= (UNIXEPOCH() - ?2) AND Failed != 0");
@@ -1468,12 +1467,12 @@ bool GetAccountFailedLoginAttempts(TDatabase *Database, int AccountID, int TimeW
 		return false;
 	}
 
-	*Result = sqlite3_column_int(Stmt, 0);
+	*FailedAttempts = sqlite3_column_int(Stmt, 0);
 	return true;
 }
 
-bool GetIPAddressFailedLoginAttempts(TDatabase *Database, int IPAddress, int TimeWindow, int *Result){
-	ASSERT(Database != NULL);
+bool GetIPAddressFailedLoginAttempts(TDatabase *Database, int IPAddress, int TimeWindow, int *FailedAttempts){
+	ASSERT(Database != NULL && FailedAttempts != NULL);
 	sqlite3_stmt *Stmt = PrepareQuery(Database,
 			"SELECT COUNT(*) FROM LoginAttempts"
 			" WHERE IPAddress = ?1 AND Timestamp >= (UNIXEPOCH() - ?2) AND Failed != 0");
@@ -1494,7 +1493,7 @@ bool GetIPAddressFailedLoginAttempts(TDatabase *Database, int IPAddress, int Tim
 		return false;
 	}
 
-	*Result = sqlite3_column_int(Stmt, 0);
+	*FailedAttempts = sqlite3_column_int(Stmt, 0);
 	return true;
 }
 
@@ -1908,14 +1907,14 @@ bool ExcludeFromAuctions(TDatabase *Database, int WorldID, int CharacterID, int 
 
 // Banishment Tables
 //==============================================================================
-bool IsCharacterNamelocked(TDatabase *Database, int CharacterID, bool *Result){
-	ASSERT(Database != NULL && Result != NULL);
+bool IsCharacterNamelocked(TDatabase *Database, int CharacterID, bool *Namelocked){
+	ASSERT(Database != NULL && Namelocked != NULL);
 	TNamelockStatus Status;
 	if(!GetNamelockStatus(Database, CharacterID, &Status)){
 		return false;
 	}
 
-	*Result = Status.Namelocked && !Status.Approved;
+	*Namelocked = Status.Namelocked && !Status.Approved;
 	return true;
 }
 
@@ -1978,8 +1977,8 @@ bool InsertNamelock(TDatabase *Database, int CharacterID, int IPAddress,
 	return true;
 }
 
-bool IsAccountBanished(TDatabase *Database, int AccountID, bool *Result){
-	ASSERT(Database != NULL && Result != NULL);
+bool IsAccountBanished(TDatabase *Database, int AccountID, bool *Banished){
+	ASSERT(Database != NULL && Banished != NULL);
 	sqlite3_stmt *Stmt = PrepareQuery(Database,
 			"SELECT 1 FROM Banishments"
 			" WHERE AccountID = ?1"
@@ -2001,7 +2000,7 @@ bool IsAccountBanished(TDatabase *Database, int AccountID, bool *Result){
 		return false;
 	}
 
-	*Result = (ErrorCode == SQLITE_ROW);
+	*Banished = (ErrorCode == SQLITE_ROW);
 	return true;
 }
 
@@ -2079,8 +2078,8 @@ bool InsertBanishment(TDatabase *Database, int CharacterID, int IPAddress, int G
 	return true;
 }
 
-bool GetNotationCount(TDatabase *Database, int CharacterID, int *Result){
-	ASSERT(Database != NULL && Result != NULL);
+bool GetNotationCount(TDatabase *Database, int CharacterID, int *Notations){
+	ASSERT(Database != NULL && Notations != NULL);
 	sqlite3_stmt *Stmt = PrepareQuery(Database,
 			"SELECT COUNT(*) FROM Notations WHERE CharacterID = ?1");
 	if(Stmt == NULL){
@@ -2099,7 +2098,7 @@ bool GetNotationCount(TDatabase *Database, int CharacterID, int *Result){
 		return false;
 	}
 
-	*Result = sqlite3_column_int(Stmt, 0);
+	*Notations = sqlite3_column_int(Stmt, 0);
 	return true;
 }
 
@@ -2133,8 +2132,8 @@ bool InsertNotation(TDatabase *Database, int CharacterID, int IPAddress,
 	return true;
 }
 
-bool IsIPBanished(TDatabase *Database, int IPAddress, bool *Result){
-	ASSERT(Database != NULL && Result != NULL);
+bool IsIPBanished(TDatabase *Database, int IPAddress, bool *Banished){
+	ASSERT(Database != NULL && Banished != NULL);
 	sqlite3_stmt *Stmt = PrepareQuery(Database,
 			"SELECT 1 FROM IPBanishments"
 			" WHERE IPAddress = ?1"
@@ -2156,7 +2155,7 @@ bool IsIPBanished(TDatabase *Database, int IPAddress, bool *Result){
 		return false;
 	}
 
-	*Result = (ErrorCode == SQLITE_ROW);
+	*Banished = (ErrorCode == SQLITE_ROW);
 	return true;
 }
 
@@ -2191,8 +2190,8 @@ bool InsertIPBanishment(TDatabase *Database, int CharacterID, int IPAddress,
 	return true;
 }
 
-bool IsStatementReported(TDatabase *Database, int WorldID, TStatement *Statement, bool *Result){
-	ASSERT(Database != NULL && Statement != NULL && Result != NULL);
+bool IsStatementReported(TDatabase *Database, int WorldID, TStatement *Statement, bool *Reported){
+	ASSERT(Database != NULL && Statement != NULL && Reported != NULL);
 	sqlite3_stmt *Stmt = PrepareQuery(Database,
 			"SELECT 1 FROM Statements"
 			" WHERE WorldID = ?1 AND Timestamp = ?2 AND StatementID = ?3");
@@ -2215,7 +2214,7 @@ bool IsStatementReported(TDatabase *Database, int WorldID, TStatement *Statement
 		return false;
 	}
 
-	*Result = (ErrorCode == SQLITE_ROW);
+	*Reported = (ErrorCode == SQLITE_ROW);
 	return true;
 }
 

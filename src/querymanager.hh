@@ -840,24 +840,24 @@ int DatabaseMaxConcurrency(void);
 bool GetWorldID(TDatabase *Database, const char *World, int *WorldID);
 bool GetWorlds(TDatabase *Database, DynamicArray<TWorld> *Worlds);
 bool GetWorldConfig(TDatabase *Database, int WorldID, TWorldConfig *WorldConfig);
-bool AccountExists(TDatabase *Database, int AccountID, const char *Email, bool *Result);
-bool AccountNumberExists(TDatabase *Database, int AccountID, bool *Result);
-bool AccountEmailExists(TDatabase *Database, const char *Email, bool *Result);
+bool AccountExists(TDatabase *Database, int AccountID, const char *Email, bool *Exists);
+bool AccountNumberExists(TDatabase *Database, int AccountID, bool *Exists);
+bool AccountEmailExists(TDatabase *Database, const char *Email, bool *Exists);
 bool CreateAccount(TDatabase *Database, int AccountID, const char *Email, const uint8 *Auth, int AuthSize);
 bool GetAccountData(TDatabase *Database, int AccountID, TAccount *Account);
 bool GetAccountOnlineCharacters(TDatabase *Database, int AccountID, int *OnlineCharacters);
-bool IsCharacterOnline(TDatabase *Database, int CharacterID, bool *Result);
+bool IsCharacterOnline(TDatabase *Database, int CharacterID, bool *Online);
 bool ActivatePendingPremiumDays(TDatabase *Database, int AccountID);
 bool GetCharacterEndpoints(TDatabase *Database, int AccountID, DynamicArray<TCharacterEndpoint> *Characters);
 bool GetCharacterSummaries(TDatabase *Database, int AccountID, DynamicArray<TCharacterSummary> *Characters);
-bool CharacterNameExists(TDatabase *Database, const char *Name, bool *Result);
+bool CharacterNameExists(TDatabase *Database, const char *Name, bool *Exists);
 bool CreateCharacter(TDatabase *Database, int WorldID, int AccountID, const char *Name, int Sex);
 bool GetCharacterID(TDatabase *Database, int WorldID, const char *CharacterName, int *CharacterID);
 bool GetCharacterLoginData(TDatabase *Database, const char *CharacterName, TCharacterLoginData *Character);
 bool GetCharacterProfile(TDatabase *Database, const char *CharacterName, TCharacterProfile *Character);
-bool GetCharacterRight(TDatabase *Database, int CharacterID, const char *Right, bool *Result);
+bool GetCharacterRight(TDatabase *Database, int CharacterID, const char *Right, bool *HasRight);
 bool GetCharacterRights(TDatabase *Database, int CharacterID, DynamicArray<TCharacterRight> *Rights);
-bool GetGuildLeaderStatus(TDatabase *Database, int WorldID, int CharacterID, bool *Result);
+bool GetGuildLeaderStatus(TDatabase *Database, int WorldID, int CharacterID, bool *GuildLeader);
 bool IncrementIsOnline(TDatabase *Database, int WorldID, int CharacterID);
 bool DecrementIsOnline(TDatabase *Database, int WorldID, int CharacterID);
 bool ClearIsOnline(TDatabase *Database, int WorldID, int *NumAffectedCharacters);
@@ -870,10 +870,10 @@ bool InsertCharacterDeath(TDatabase *Database, int WorldID, int CharacterID, int
 bool InsertBuddy(TDatabase *Database, int WorldID, int AccountID, int BuddyID);
 bool DeleteBuddy(TDatabase *Database, int WorldID, int AccountID, int BuddyID);
 bool GetBuddies(TDatabase *Database, int WorldID, int AccountID, DynamicArray<TAccountBuddy> *Buddies);
-bool GetWorldInvitation(TDatabase *Database, int WorldID, int CharacterID, bool *Result);
+bool GetWorldInvitation(TDatabase *Database, int WorldID, int CharacterID, bool *Invited);
 bool InsertLoginAttempt(TDatabase *Database, int AccountID, int IPAddress, bool Failed);
-bool GetAccountFailedLoginAttempts(TDatabase *Database, int AccountID, int TimeWindow, int *Result);
-bool GetIPAddressFailedLoginAttempts(TDatabase *Database, int IPAddress, int TimeWindow, int *Result);
+bool GetAccountFailedLoginAttempts(TDatabase *Database, int AccountID, int TimeWindow, int *FailedAttempts);
+bool GetIPAddressFailedLoginAttempts(TDatabase *Database, int IPAddress, int TimeWindow, int *FailedAttempts);
 
 // NOTE(fusion): House Tables
 bool FinishHouseAuctions(TDatabase *Database, int WorldID, DynamicArray<THouseAuction> *Auctions);
@@ -891,21 +891,21 @@ bool InsertHouses(TDatabase *Database, int WorldID, int NumHouses, THouse *House
 bool ExcludeFromAuctions(TDatabase *Database, int WorldID, int CharacterID, int Duration, int BanishmentID);
 
 // NOTE(fusion): Banishment Tables
-bool IsCharacterNamelocked(TDatabase *Database, int CharacterID, bool *Result);
+bool IsCharacterNamelocked(TDatabase *Database, int CharacterID, bool *Namelocked);
 bool GetNamelockStatus(TDatabase *Database, int CharacterID, TNamelockStatus *Status);
 bool InsertNamelock(TDatabase *Database, int CharacterID, int IPAddress,
 		int GamemasterID, const char *Reason, const char *Comment);
-bool IsAccountBanished(TDatabase *Database, int AccountID, bool *Result);
+bool IsAccountBanished(TDatabase *Database, int AccountID, bool *Banished);
 bool GetBanishmentStatus(TDatabase *Database, int CharacterID, TBanishmentStatus *Status);
 bool InsertBanishment(TDatabase *Database, int CharacterID, int IPAddress, int GamemasterID,
 		const char *Reason, const char *Comment, bool FinalWarning, int Duration, int *BanishmentID);
-bool GetNotationCount(TDatabase *Database, int CharacterID, int *Result);
+bool GetNotationCount(TDatabase *Database, int CharacterID, int *Notations);
 bool InsertNotation(TDatabase *Database, int CharacterID, int IPAddress,
 		int GamemasterID, const char *Reason, const char *Comment);
-bool IsIPBanished(TDatabase *Database, int IPAddress, bool *Result);
+bool IsIPBanished(TDatabase *Database, int IPAddress, bool *Banished);
 bool InsertIPBanishment(TDatabase *Database, int CharacterID, int IPAddress,
 		int GamemasterID, const char *Reason, const char *Comment, int Duration);
-bool IsStatementReported(TDatabase *Database, int WorldID, TStatement *Statement, bool *Result);
+bool IsStatementReported(TDatabase *Database, int WorldID, TStatement *Statement, bool *Reported);
 bool InsertStatements(TDatabase *Database, int WorldID, int NumStatements, TStatement *Statements);
 bool InsertReportedStatement(TDatabase *Database, int WorldID, TStatement *Statement,
 		int BanishmentID, int ReporterID, const char *Reason, const char *Comment);
@@ -985,7 +985,6 @@ struct TQuery{
 };
 
 const char *QueryName(int QueryType);
-
 TQuery *QueryNew(void);
 void QueryDone(TQuery *Query);
 int QueryRefCount(TQuery *Query);

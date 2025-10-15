@@ -150,7 +150,7 @@ static void ParamBool(ParamBuffer *Params, bool Value){
 	}
 }
 
-static void ParamInteger(ParamBuffer *Params, int Value){
+static void ParamInt(ParamBuffer *Params, int Value){
 	if(Params->PreferredFormat == 1){ // BINARY FORMAT
 		uint8 Data[4];
 		BufferWrite32BE(Data, (uint32)Value);
@@ -1027,7 +1027,7 @@ bool GetWorldConfig(TDatabase *Database, int WorldID, TWorldConfig *WorldConfig)
 
 	ParamBuffer Params = {};
 	ParamBegin(&Params, 1, 1);
-	ParamInteger(&Params, WorldID);
+	ParamInt(&Params, WorldID);
 	PGresult *Result = PQexecPrepared(Database->Handle, Stmt, Params.NumParams,
 							Params.Values, Params.Lengths, Params.Formats, 1);
 	AutoResultClear ResultGuard(Result);
@@ -1054,8 +1054,29 @@ bool GetWorldConfig(TDatabase *Database, int WorldID, TWorldConfig *WorldConfig)
 	return true;
 }
 
-bool AccountExists(TDatabase *Database, int AccountID, const char *Email, bool *Result){
-	return false;
+bool AccountExists(TDatabase *Database, int AccountID, const char *Email, bool *Exists){
+	const char *Stmt = PrepareQuery(Database,
+			"SELECT 1 FROM Accounts"
+			" WHERE AccountID = $1::INTEGER OR Email = $2::TEXT");
+	if(Stmt == NULL){
+		LOG_ERR("Failed to prepare query");
+		return false;
+	}
+
+	ParamBuffer Params = {};
+	ParamBegin(&Params, 2, 1);
+	ParamInt(&Params, AccountID);
+	ParamText(&Params, Email);
+	PGresult *Result = PQexecPrepared(Database->Handle, Stmt, Params.NumParams,
+							Params.Values, Params.Lengths, Params.Formats, 1);
+	AutoResultClear ResultGuard(Result);
+	if(PQresultStatus(Result) != PGRES_TUPLES_OK){
+		LOG_ERR("Failed to execute query: %s", PQerrorMessage(Database->Handle));
+		return false;
+	}
+
+	*Exists = (PQntuples(Result) > 0);
+	return true;
 }
 
 bool AccountNumberExists(TDatabase *Database, int AccountID, bool *Result){
