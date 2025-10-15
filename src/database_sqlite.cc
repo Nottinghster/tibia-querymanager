@@ -376,11 +376,6 @@ TDatabase *DatabaseOpen(void){
 	return Database;
 }
 
-int DatabaseChanges(TDatabase *Database){
-	ASSERT(Database != NULL);
-	return sqlite3_changes(Database->Handle);
-}
-
 bool DatabaseCheckpoint(TDatabase *Database){
 	// IMPORTANT(fusion): Since SQLite is a local database, we don't need to check
 	// whether the connection is still valid or needs reconnecting.
@@ -735,7 +730,7 @@ bool IsCharacterOnline(TDatabase *Database, int CharacterID, bool *Online){
 		return false;
 	}
 
-	*Online = (ErrorCode == SQLITE_ROW) && (sqlite3_column_int(Stmt, 0) != 0);
+	*Online = (ErrorCode == SQLITE_ROW && sqlite3_column_int(Stmt, 0) != 0);
 	return true;
 }
 
@@ -743,7 +738,8 @@ bool ActivatePendingPremiumDays(TDatabase *Database, int AccountID){
 	ASSERT(Database != NULL);
 	sqlite3_stmt *Stmt = PrepareQuery(Database,
 			"UPDATE Accounts"
-			" SET PremiumEnd = MAX(PremiumEnd, UNIXEPOCH()) + PendingPremiumDays * 86400,"
+			" SET PremiumEnd = MAX(PremiumEnd, UNIXEPOCH())"
+							" + PendingPremiumDays * 86400,"
 				" PendingPremiumDays = 0"
 			" WHERE AccountID = ?1 AND PendingPremiumDays > 0");
 	if(Stmt == NULL){
@@ -1360,11 +1356,11 @@ bool DeleteBuddy(TDatabase *Database, int WorldID, int AccountID, int BuddyID){
 bool GetBuddies(TDatabase *Database, int WorldID, int AccountID, DynamicArray<TAccountBuddy> *Buddies){
 	ASSERT(Database != NULL && Buddies != NULL);
 	sqlite3_stmt *Stmt = PrepareQuery(Database,
-		"SELECT B.BuddyID, C.Name"
-		" FROM Buddies AS B"
-		" INNER JOIN Characters AS C"
-			" ON C.WorldID = B.WorldID AND C.CharacterID = B.BuddyID"
-		" WHERE B.WorldID = ?1 AND B.AccountID = ?2");
+			"SELECT B.BuddyID, C.Name"
+			" FROM Buddies AS B"
+			" INNER JOIN Characters AS C"
+				" ON C.WorldID = B.WorldID AND C.CharacterID = B.BuddyID"
+			" WHERE B.WorldID = ?1 AND B.AccountID = ?2");
 	if(Stmt == NULL){
 		LOG_ERR("Failed to prepare query");
 		return false;
@@ -1395,8 +1391,8 @@ bool GetBuddies(TDatabase *Database, int WorldID, int AccountID, DynamicArray<TA
 bool GetWorldInvitation(TDatabase *Database, int WorldID, int CharacterID, bool *Invited){
 	ASSERT(Database != NULL && Invited != NULL);
 	sqlite3_stmt *Stmt = PrepareQuery(Database,
-		"SELECT 1 FROM WorldInvitations"
-		" WHERE WorldID = ?1 AND CharacterID = ?2");
+			"SELECT 1 FROM WorldInvitations"
+			" WHERE WorldID = ?1 AND CharacterID = ?2");
 	if(Stmt == NULL){
 		LOG_ERR("Failed to prepare query");
 		return false;
@@ -1449,7 +1445,9 @@ bool GetAccountFailedLoginAttempts(TDatabase *Database, int AccountID, int TimeW
 	ASSERT(Database != NULL && FailedAttempts != NULL);
 	sqlite3_stmt *Stmt = PrepareQuery(Database,
 			"SELECT COUNT(*) FROM LoginAttempts"
-			" WHERE AccountID = ?1 AND Timestamp >= (UNIXEPOCH() - ?2) AND Failed != 0");
+			" WHERE AccountID = ?1"
+				" AND (UNIXEPOCH() - Timestamp) <= ?2"
+				" AND Failed != 0");
 	if(Stmt == NULL){
 		LOG_ERR("Failed to prepare query");
 		return false;
@@ -1475,7 +1473,9 @@ bool GetIPAddressFailedLoginAttempts(TDatabase *Database, int IPAddress, int Tim
 	ASSERT(Database != NULL && FailedAttempts != NULL);
 	sqlite3_stmt *Stmt = PrepareQuery(Database,
 			"SELECT COUNT(*) FROM LoginAttempts"
-			" WHERE IPAddress = ?1 AND Timestamp >= (UNIXEPOCH() - ?2) AND Failed != 0");
+			" WHERE IPAddress = ?1"
+				" AND (UNIXEPOCH() - Timestamp) <= ?2"
+				" AND Failed != 0");
 	if(Stmt == NULL){
 		LOG_ERR("Failed to prepare query");
 		return false;
@@ -1506,7 +1506,9 @@ bool FinishHouseAuctions(TDatabase *Database, int WorldID, DynamicArray<THouseAu
 	// be an inconvenience but it's not a big problem.
 	sqlite3_stmt *Stmt = PrepareQuery(Database,
 			"DELETE FROM HouseAuctions"
-			" WHERE WorldID = ?1 AND FinishTime IS NOT NULL AND FinishTime <= UNIXEPOCH()"
+			" WHERE WorldID = ?1"
+				" AND FinishTime IS NOT NULL"
+				" AND FinishTime <= UNIXEPOCH()"
 			" RETURNING HouseID, BidderID, BidAmount, FinishTime,"
 				" (SELECT Name FROM Characters WHERE CharacterID = BidderID)");
 	if(Stmt == NULL){
@@ -1673,7 +1675,8 @@ bool InsertHouseOwner(TDatabase *Database, int WorldID, int HouseID, int OwnerID
 bool UpdateHouseOwner(TDatabase *Database, int WorldID, int HouseID, int OwnerID, int PaidUntil){
 	ASSERT(Database != NULL);
 	sqlite3_stmt *Stmt = PrepareQuery(Database,
-			"UPDATE HouseOwners SET OwnerID = ?3, PaidUntil = ?4"
+			"UPDATE HouseOwners"
+			" SET OwnerID = ?3, PaidUntil = ?4"
 			" WHERE WorldID = ?1 AND HouseID = ?2");
 	if(Stmt == NULL){
 		LOG_ERR("Failed to prepare query");
@@ -1866,7 +1869,8 @@ bool InsertHouses(TDatabase *Database, int WorldID, int NumHouses, THouse *House
 
 		if(sqlite3_step(Stmt) != SQLITE_DONE){
 			LOG_ERR("Failed to insert house %d: %s",
-					Houses[i].HouseID, sqlite3_errmsg(Database->Handle));
+					Houses[i].HouseID,
+					sqlite3_errmsg(Database->Handle));
 			return false;
 		}
 
@@ -1881,7 +1885,8 @@ bool ExcludeFromAuctions(TDatabase *Database, int WorldID, int CharacterID, int 
 	// NOTE(fusion): Same as `DecrementIsOnline`.
 	sqlite3_stmt *Stmt = PrepareQuery(Database,
 			"INSERT INTO HouseAuctionExclusions (CharacterID, Issued, Until, BanishmentID)"
-			" SELECT ?2, UNIXEPOCH(), (UNIXEPOCH() + ?3), ?4 FROM Characters"
+			" SELECT ?2, UNIXEPOCH(), (UNIXEPOCH() + ?3), ?4"
+				" FROM Characters"
 				" WHERE WorldID = ?1 AND CharacterID = ?2");
 	if(Stmt == NULL){
 		LOG_ERR("Failed to prepare query");
@@ -2256,7 +2261,8 @@ bool InsertStatements(TDatabase *Database, int WorldID, int NumStatements, TStat
 
 		if(sqlite3_step(Stmt) != SQLITE_DONE){
 			LOG_ERR("Failed to insert statement %d: %s",
-					Statements[i].StatementID, sqlite3_errmsg(Database->Handle));
+					Statements[i].StatementID,
+					sqlite3_errmsg(Database->Handle));
 			return false;
 		}
 
@@ -2339,8 +2345,8 @@ bool MergeKillStatistics(TDatabase *Database, int WorldID, int NumStats, TKillSt
 	sqlite3_stmt *Stmt = PrepareQuery(Database,
 			"INSERT INTO KillStatistics (WorldID, RaceName, TimesKilled, PlayersKilled)"
 			" VALUES (?1, ?2, ?3, ?4)"
-			" ON CONFLICT DO UPDATE SET TimesKilled = TimesKilled + Excluded.TimesKilled,"
-									" PlayersKilled = PlayersKilled + Excluded.PlayersKilled");
+			" ON CONFLICT DO UPDATE SET TimesKilled = TimesKilled + EXCLUDED.TimesKilled,"
+									" PlayersKilled = PlayersKilled + EXCLUDED.PlayersKilled");
 	if(Stmt == NULL){
 		LOG_ERR("Failed to prepare query");
 		return false;
@@ -2362,8 +2368,9 @@ bool MergeKillStatistics(TDatabase *Database, int WorldID, int NumStats, TKillSt
 		}
 
 		if(sqlite3_step(Stmt) != SQLITE_DONE){
-			LOG_ERR("Failed to insert \"%s\" stats: %s",
-					Stats[i].RaceName, sqlite3_errmsg(Database->Handle));
+			LOG_ERR("Failed to merge \"%s\" stats: %s",
+					Stats[i].RaceName,
+					sqlite3_errmsg(Database->Handle));
 			return false;
 		}
 
@@ -2456,7 +2463,8 @@ bool InsertOnlineCharacters(TDatabase *Database, int WorldID,
 
 		if(sqlite3_step(Stmt) != SQLITE_DONE){
 			LOG_ERR("Failed to insert character \"%s\": %s",
-					Characters[i].Name, sqlite3_errmsg(Database->Handle));
+					Characters[i].Name,
+					sqlite3_errmsg(Database->Handle));
 			return false;
 		}
 

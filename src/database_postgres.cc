@@ -279,6 +279,12 @@ public:
 	}
 };
 
+static int ResultAffectedRows(PGresult *Result){
+	int AffectedRows = 0;
+	ParseInteger(&AffectedRows, PQcmdTuples(Result));
+	return AffectedRows;
+}
+
 static bool GetResultBool(PGresult *Result, int Row, int Col){
 	bool Value = false;
 	int Format = PQfformat(Result, Col);
@@ -353,13 +359,13 @@ static int GetResultInt(PGresult *Result, int Row, int Col){
 
 			case INT8OID:{
 				ASSERT(PQgetlength(Result, Row, Col) == 8);
-				int64 Temp = (int64)BufferRead64BE((const uint8*)PQgetvalue(Result, Row, Col));
-				if(Temp < INT_MIN || Temp > INT_MAX){
+				int64 Value64 = (int64)BufferRead64BE((const uint8*)PQgetvalue(Result, Row, Col));
+				if(Value64 < INT_MIN || Value64 > INT_MAX){
 					LOG_WARN("Lossy conversion of column (%d) %s from INT8 to INT4",
 							Col, PQfname(Result, Col));
 				}
 
-				Value = (int)Temp;
+				Value = (int)Value64;
 				break;
 			}
 
@@ -439,7 +445,7 @@ static int GetResultByteA(PGresult *Result, int Row, int Col, uint8 *Buffer, int
 		}
 	}else if(Format == 1){ // BINARY FORMAT
 		Size = PQgetlength(Result, Row, Col);
-		if(Size > 0 && Size < BufferSize){
+		if(Size > 0 && Size <= BufferSize){
 			memcpy(Buffer, PQgetvalue(Result, Row, Col), Size);
 		}
 	}
@@ -462,13 +468,13 @@ static int GetResultIPAddress(PGresult *Result, int Row, int Col){
 		switch(Type){
 			case INT8OID:{
 				ASSERT(PQgetlength(Result, Row, Col) == 8);
-				int64 Temp = (int64)BufferRead64BE((const uint8*)PQgetvalue(Result, Row, Col));
-				if(Temp < INT_MIN || Temp > INT_MAX){
+				int64 IPAddress64 = (int64)BufferRead64BE((const uint8*)PQgetvalue(Result, Row, Col));
+				if(IPAddress64 < INT_MIN || IPAddress64 > INT_MAX){
 					LOG_WARN("Lossy conversion of column (%d) %s from INT8 to IPV4",
 							Col, PQfname(Result, Col));
 				}
 
-				IPAddress = (int)Temp;
+				IPAddress = (int)IPAddress64;
 				break;
 			}
 
@@ -576,13 +582,13 @@ static int GetResultTimestamp(PGresult *Result, int Row, int Col){
 		switch(Type){
 			case INT8OID:{
 				ASSERT(PQgetlength(Result, Row, Col) == 8);
-				int64 Temp = (int64)BufferRead64BE((const uint8*)PQgetvalue(Result, Row, Col));
-				if(Temp < INT_MIN || Temp > INT_MAX){
+				int64 Timestamp64 = (int64)BufferRead64BE((const uint8*)PQgetvalue(Result, Row, Col));
+				if(Timestamp64 < INT_MIN || Timestamp64 > INT_MAX){
 					LOG_WARN("Lossy conversion of column (%d) %s from INT8 to TIMESTAMP",
 							Col, PQfname(Result, Col));
 				}
 
-				Timestamp = (int)Temp;
+				Timestamp = (int)Timestamp64;
 				break;
 			}
 
@@ -845,13 +851,13 @@ static int GetResultInterval(PGresult *Result, int Row, int Col){
 		switch(Type){
 			case INT8OID:{
 				ASSERT(PQgetlength(Result, Row, Col) == 8);
-				int64 Temp = (int64)BufferRead64BE((const uint8*)PQgetvalue(Result, Row, Col));
-				if(Temp < INT_MIN || Temp > INT_MAX){
+				int64 Interval64 = (int64)BufferRead64BE((const uint8*)PQgetvalue(Result, Row, Col));
+				if(Interval64 < INT_MIN || Interval64 > INT_MAX){
 					LOG_WARN("Lossy conversion of column (%d) %s from INT8 to INTERVAL",
 							Col, PQfname(Result, Col));
 				}
 
-				Interval = (int)Temp;
+				Interval = (int)Interval64;
 				break;
 			}
 
@@ -1262,12 +1268,6 @@ TDatabase *DatabaseOpen(void){
 	return Database;
 }
 
-int DatabaseChanges(TDatabase *Database){
-	ASSERT(Database != NULL);
-	// TODO?
-	return 0;
-}
-
 bool DatabaseCheckpoint(TDatabase *Database){
 	ASSERT(Database != NULL);
 	bool Result = true;
@@ -1421,8 +1421,7 @@ bool AccountExists(TDatabase *Database, int AccountID, const char *Email, bool *
 bool AccountNumberExists(TDatabase *Database, int AccountID, bool *Exists){
 	ASSERT(Database != NULL && Exists != NULL);
 	const char *Stmt = PrepareQuery(Database,
-			"SELECT 1 FROM Accounts"
-			" WHERE AccountID = $1::INTEGER");
+			"SELECT 1 FROM Accounts WHERE AccountID = $1::INTEGER");
 	if(Stmt == NULL){
 		LOG_ERR("Failed to prepare query");
 		return false;
@@ -1498,7 +1497,7 @@ bool GetAccountData(TDatabase *Database, int AccountID, TAccount *Account){
 	ASSERT(Database != NULL && Account != NULL);
 	const char *Stmt = PrepareQuery(Database,
 			"SELECT AccountID, Email, Auth,"
-				" (PremiumEnd - CURRENT_TIMESTAMP),"
+				" GREATEST(PremiumEnd - CURRENT_TIMESTAMP, '0'),"
 				" PendingPremiumDays, Deleted"
 			" FROM Accounts WHERE AccountID = $1::INTEGER");
 	if(Stmt == NULL){
@@ -1526,7 +1525,7 @@ bool GetAccountData(TDatabase *Database, int AccountID, TAccount *Account){
 		if(GetResultByteA(Result, 0, 2, Auth, sizeof(Auth)) == sizeof(Auth)){
 			memcpy(Account->Auth, Auth, sizeof(Auth));
 		}
-		Account->PremiumDays = GetResultInterval(Result, 0, 3);
+		Account->PremiumDays = RoundSecondsToDays(GetResultInterval(Result, 0, 3));
 		Account->PendingPremiumDays = GetResultInt(Result, 0, 4);
 		Account->Deleted = GetResultBool(Result, 0, 5);
 	}
@@ -1566,250 +1565,1794 @@ bool GetAccountOnlineCharacters(TDatabase *Database, int AccountID, int *OnlineC
 	return true;
 }
 
-bool IsCharacterOnline(TDatabase *Database, int CharacterID, bool *Result){
-	return false;
+bool IsCharacterOnline(TDatabase *Database, int CharacterID, bool *Online){
+	ASSERT(Database != NULL && Online != NULL);
+	const char *Stmt = PrepareQuery(Database,
+			"SELECT IsOnline FROM Characters WHERE CharacterID = $1::INTEGER");
+	if(Stmt == NULL){
+		LOG_ERR("Failed to prepare query");
+		return false;
+	}
+
+	ParamBuffer Params = {};
+	ParamBegin(&Params, 1, 1);
+	ParamInt(&Params, CharacterID);
+	PGresult *Result = PQexecPrepared(Database->Handle, Stmt, Params.NumParams,
+							Params.Values, Params.Lengths, Params.Formats, 1);
+	AutoResultClear ResultGuard(Result);
+	if(PQresultStatus(Result) != PGRES_TUPLES_OK){
+		LOG_ERR("Failed to execute query: %s", PQerrorMessage(Database->Handle));
+		return false;
+	}
+
+	*Online = (PQntuples(Result) > 0 && GetResultInt(Result, 0, 0) != 0);
+	return true;
 }
 
 bool ActivatePendingPremiumDays(TDatabase *Database, int AccountID){
-	return false;
+	ASSERT(Database != NULL);
+	const char *Stmt = PrepareQuery(Database,
+			"UPDATE Accounts"
+			" SET PremiumEnd = GREATEST(PremiumEnd, CURRENT_TIMESTAMP)"
+						" + MAKE_INTERVAL(days => PendingPremiumDays),"
+				" PendingPremiumDays = 0"
+			" WHERE AccountID = $1::INTEGER AND PendingPremiumDays > 0");
+	if(Stmt == NULL){
+		LOG_ERR("Failed to prepare query");
+		return false;
+	}
+
+	ParamBuffer Params = {};
+	ParamBegin(&Params, 1, 1);
+	ParamInt(&Params, AccountID);
+	PGresult *Result = PQexecPrepared(Database->Handle, Stmt, Params.NumParams,
+							Params.Values, Params.Lengths, Params.Formats, 1);
+	AutoResultClear ResultGuard(Result);
+	if(PQresultStatus(Result) != PGRES_COMMAND_OK){
+		LOG_ERR("Failed to execute query: %s", PQerrorMessage(Database->Handle));
+		return false;
+	}
+
+	return true;
 }
 
 bool GetCharacterEndpoints(TDatabase *Database, int AccountID, DynamicArray<TCharacterEndpoint> *Characters){
-	return false;
+	ASSERT(Database != NULL && Characters != NULL);
+	const char *Stmt = PrepareQuery(Database,
+			"SELECT C.Name, W.Name, W.Host, W.Port"
+			" FROM Characters AS C"
+			" INNER JOIN Worlds AS W ON W.WorldID = C.WorldID"
+			" WHERE C.AccountID = $1::INTEGER");
+	if(Stmt == NULL){
+		LOG_ERR("Failed to prepare query");
+		return false;
+	}
+
+	ParamBuffer Params = {};
+	ParamBegin(&Params, 1, 1);
+	ParamInt(&Params, AccountID);
+	PGresult *Result = PQexecPrepared(Database->Handle, Stmt, Params.NumParams,
+							Params.Values, Params.Lengths, Params.Formats, 1);
+	AutoResultClear ResultGuard(Result);
+	if(PQresultStatus(Result) != PGRES_TUPLES_OK){
+		LOG_ERR("Failed to execute query: %s", PQerrorMessage(Database->Handle));
+		return false;
+	}
+
+	int NumRows = PQntuples(Result);
+	for(int Row = 0; Row < NumRows; Row += 1){
+		int WorldAddress;
+		const char *CharacterName = GetResultText(Result, Row, 0);
+		const char *WorldName = GetResultText(Result, Row, 1);
+		const char *HostName = GetResultText(Result, Row, 2);
+		if(HostName == NULL || !ResolveHostName(HostName, &WorldAddress)){
+			LOG_ERR("Failed to resolve world \"%s\" host name \"%s\" for character \"%s\"",
+					WorldName, HostName, CharacterName);
+			continue;
+		}
+
+		TCharacterEndpoint Character = {};
+		StringBufCopy(Character.Name, CharacterName);
+		StringBufCopy(Character.WorldName, WorldName);
+		Character.WorldAddress = WorldAddress;
+		Character.WorldPort = GetResultInt(Result, Row, 3);
+		Characters->Push(Character);
+
+	}
+
+	return true;
 }
 
 bool GetCharacterSummaries(TDatabase *Database, int AccountID, DynamicArray<TCharacterSummary> *Characters){
-	return false;
+	ASSERT(Database != NULL && Characters != NULL);
+	const char *Stmt = PrepareQuery(Database,
+			"SELECT C.Name, W.Name, C.Level, C.Profession, C.IsOnline, C.Deleted"
+			" FROM Characters AS C"
+			" LEFT JOIN Worlds AS W ON W.WorldID = C.WorldID"
+			" WHERE C.AccountID = $1::INTEGER");
+	if(Stmt == NULL){
+		LOG_ERR("Failed to prepare query");
+		return false;
+	}
+
+	ParamBuffer Params = {};
+	ParamBegin(&Params, 1, 1);
+	ParamInt(&Params, AccountID);
+	PGresult *Result = PQexecPrepared(Database->Handle, Stmt, Params.NumParams,
+							Params.Values, Params.Lengths, Params.Formats, 1);
+	AutoResultClear ResultGuard(Result);
+	if(PQresultStatus(Result) != PGRES_TUPLES_OK){
+		LOG_ERR("Failed to execute query: %s", PQerrorMessage(Database->Handle));
+		return false;
+	}
+
+	int NumRows = PQntuples(Result);
+	for(int Row = 0; Row < NumRows; Row += 1){
+		TCharacterSummary Character = {};
+		StringBufCopy(Character.Name, GetResultText(Result, Row, 0));
+		StringBufCopy(Character.World, GetResultText(Result, Row, 1));
+		Character.Level = GetResultInt(Result, Row, 2);
+		StringBufCopy(Character.Profession, GetResultText(Result, Row, 3));
+		Character.Online = GetResultBool(Result, Row, 4);
+		Character.Deleted = GetResultBool(Result, Row, 5);;
+		Characters->Push(Character);
+	}
+
+	return true;
 }
 
-bool CharacterNameExists(TDatabase *Database, const char *Name, bool *Result){
-	return false;
+bool CharacterNameExists(TDatabase *Database, const char *Name, bool *Exists){
+	ASSERT(Database != NULL && Exists != NULL);
+	const char *Stmt = PrepareQuery(Database,
+			"SELECT 1 FROM Characters WHERE Name = $1::TEXT");
+	if(Stmt == NULL){
+		LOG_ERR("Failed to prepare query");
+		return false;
+	}
+
+	ParamBuffer Params = {};
+	ParamBegin(&Params, 1, 1);
+	ParamText(&Params, Name);
+	PGresult *Result = PQexecPrepared(Database->Handle, Stmt, Params.NumParams,
+							Params.Values, Params.Lengths, Params.Formats, 1);
+	AutoResultClear ResultGuard(Result);
+	if(PQresultStatus(Result) != PGRES_TUPLES_OK){
+		LOG_ERR("Failed to execute query: %s", PQerrorMessage(Database->Handle));
+		return false;
+	}
+
+	*Exists = (PQntuples(Result) > 0);
+	return true;
 }
 
 bool CreateCharacter(TDatabase *Database, int WorldID, int AccountID, const char *Name, int Sex){
-	return false;
+	ASSERT(Database != NULL && Name != NULL);
+	const char *Stmt = PrepareQuery(Database,
+			"INSERT INTO Characters (WorldID, AccountID, Name, Sex)"
+			" VALUES ($1::INTEGER, $2::INTEGER, $3::TEXT, $4::INTEGER)");
+	if(Stmt == NULL){
+		LOG_ERR("Failed to prepare query");
+		return false;
+	}
+
+	ParamBuffer Params = {};
+	ParamBegin(&Params, 4, 1);
+	ParamInt(&Params, WorldID);
+	ParamInt(&Params, AccountID);
+	ParamText(&Params, Name);
+	ParamInt(&Params, Sex);
+	PGresult *Result = PQexecPrepared(Database->Handle, Stmt, Params.NumParams,
+							Params.Values, Params.Lengths, Params.Formats, 1);
+	AutoResultClear ResultGuard(Result);
+	if(PQresultStatus(Result) != PGRES_COMMAND_OK){
+		LOG_ERR("Failed to execute query: %s", PQerrorMessage(Database->Handle));
+		return false;
+	}
+
+	return true;
 }
 
 bool GetCharacterID(TDatabase *Database, int WorldID, const char *CharacterName, int *CharacterID){
-	return false;
+	ASSERT(Database != NULL && CharacterName != NULL && CharacterID != NULL);
+	const char *Stmt = PrepareQuery(Database,
+			"SELECT CharacterID FROM Characters"
+			" WHERE WorldID = $1::INTEGER AND Name = $2::TEXT");
+	if(Stmt == NULL){
+		LOG_ERR("Failed to prepare query");
+		return false;
+	}
+
+	ParamBuffer Params = {};
+	ParamBegin(&Params, 2, 1);
+	ParamInt(&Params, WorldID);
+	ParamText(&Params, CharacterName);
+	PGresult *Result = PQexecPrepared(Database->Handle, Stmt, Params.NumParams,
+							Params.Values, Params.Lengths, Params.Formats, 1);
+	AutoResultClear ResultGuard(Result);
+	if(PQresultStatus(Result) != PGRES_TUPLES_OK){
+		LOG_ERR("Failed to execute query: %s", PQerrorMessage(Database->Handle));
+		return false;
+	}
+
+	*CharacterID = (PQntuples(Result) > 0 ? GetResultInt(Result, 0, 0) : 0);
+	return true;
 }
 
 bool GetCharacterLoginData(TDatabase *Database, const char *CharacterName, TCharacterLoginData *Character){
-	return false;
+	ASSERT(Database != NULL && CharacterName != NULL && Character != NULL);
+	const char *Stmt = PrepareQuery(Database,
+			"SELECT WorldID, CharacterID, AccountID, Name,"
+				" Sex, Guild, Rank, Title, Deleted"
+			" FROM Characters WHERE Name = $1::TEXT");
+	if(Stmt == NULL){
+		LOG_ERR("Failed to prepare query");
+		return false;
+	}
+
+	ParamBuffer Params = {};
+	ParamBegin(&Params, 1, 1);
+	ParamText(&Params, CharacterName);
+	PGresult *Result = PQexecPrepared(Database->Handle, Stmt, Params.NumParams,
+							Params.Values, Params.Lengths, Params.Formats, 1);
+	AutoResultClear ResultGuard(Result);
+	if(PQresultStatus(Result) != PGRES_TUPLES_OK){
+		LOG_ERR("Failed to execute query: %s", PQerrorMessage(Database->Handle));
+		return false;
+	}
+
+	memset(Character, 0, sizeof(TCharacterLoginData));
+	if(PQntuples(Result) > 0){
+		Character->WorldID = GetResultInt(Result, 0, 0);
+		Character->CharacterID = GetResultInt(Result, 0, 1);
+		Character->AccountID = GetResultInt(Result, 0, 2);
+		StringBufCopy(Character->Name, GetResultText(Result, 0, 3));
+		Character->Sex = GetResultInt(Result, 0, 4);
+		StringBufCopy(Character->Guild, GetResultText(Result, 0, 5));
+		StringBufCopy(Character->Rank, GetResultText(Result, 0, 6));
+		StringBufCopy(Character->Title, GetResultText(Result, 0, 7));
+		Character->Deleted = GetResultBool(Result, 0, 8);
+	}
+
+	return true;
 }
 
 bool GetCharacterProfile(TDatabase *Database, const char *CharacterName, TCharacterProfile *Character){
-	return false;
+	ASSERT(Database != NULL && CharacterName != NULL && Character != NULL);
+	const char *Stmt = PrepareQuery(Database,
+			"SELECT C.Name, W.Name, C.Sex, C.Guild, C.Rank, C.Title, C.Level,"
+				" C.Profession, C.Residence, C.LastLoginTime, C.IsOnline,"
+				" C.Deleted, GREATEST(A.PremiumEnd - CURRENT_TIMESTAMP, '0')"
+			" FROM Characters AS C"
+			" LEFT JOIN Worlds AS W ON W.WorldID = C.WorldID"
+			" LEFT JOIN Accounts AS A ON A.AccountID = C.AccountID"
+			" LEFT JOIN CharacterRights AS R"
+				" ON R.CharacterID = C.CharacterID"
+				" AND R.Name = 'NO_STATISTICS'"
+			" WHERE C.Name = $1::TEXT AND R.Right IS NULL");
+	if(Stmt == NULL){
+		LOG_ERR("Failed to prepare query");
+		return false;
+	}
+
+	ParamBuffer Params = {};
+	ParamBegin(&Params, 1, 1);
+	ParamText(&Params, CharacterName);
+	PGresult *Result = PQexecPrepared(Database->Handle, Stmt, Params.NumParams,
+							Params.Values, Params.Lengths, Params.Formats, 1);
+	AutoResultClear ResultGuard(Result);
+	if(PQresultStatus(Result) != PGRES_TUPLES_OK){
+		LOG_ERR("Failed to execute query: %s", PQerrorMessage(Database->Handle));
+		return false;
+	}
+
+	memset(Character, 0, sizeof(TCharacterProfile));
+	if(PQntuples(Result) > 0){
+		StringBufCopy(Character->Name, GetResultText(Result, 0, 0));
+		StringBufCopy(Character->World, GetResultText(Result, 0, 1));
+		Character->Sex = GetResultInt(Result, 0, 2);
+		StringBufCopy(Character->Guild, GetResultText(Result, 0, 3));
+		StringBufCopy(Character->Rank, GetResultText(Result, 0, 4));
+		StringBufCopy(Character->Title, GetResultText(Result, 0, 5));
+		Character->Level = GetResultInt(Result, 0, 6);
+		StringBufCopy(Character->Profession, GetResultText(Result, 0, 7));
+		StringBufCopy(Character->Residence, GetResultText(Result, 0, 8));
+		Character->LastLogin = GetResultTimestamp(Result, 0, 9);
+		Character->Online = GetResultBool(Result, 0, 10);
+		Character->Deleted = GetResultBool(Result, 0, 11);
+		Character->PremiumDays = RoundSecondsToDays(GetResultInterval(Result, 0, 12));
+	}
+
+	return true;
 }
 
-bool GetCharacterRight(TDatabase *Database, int CharacterID, const char *Right, bool *Result){
-	return false;
+bool GetCharacterRight(TDatabase *Database, int CharacterID, const char *Right, bool *HasRight){
+	ASSERT(Database != NULL && Right != NULL && HasRight != NULL);
+	const char *Stmt = PrepareQuery(Database,
+			"SELECT 1 FROM CharacterRights"
+			" WHERE CharacterID = $1::INTEGER AND Name = $2::TEXT");
+	if(Stmt == NULL){
+		LOG_ERR("Failed to prepare query");
+		return false;
+	}
+
+	ParamBuffer Params = {};
+	ParamBegin(&Params, 2, 1);
+	ParamInt(&Params, CharacterID);
+	ParamText(&Params, Right);
+	PGresult *Result = PQexecPrepared(Database->Handle, Stmt, Params.NumParams,
+							Params.Values, Params.Lengths, Params.Formats, 1);
+	AutoResultClear ResultGuard(Result);
+	if(PQresultStatus(Result) != PGRES_TUPLES_OK){
+		LOG_ERR("Failed to execute query: %s", PQerrorMessage(Database->Handle));
+		return false;
+	}
+
+	*HasRight = (PQntuples(Result) > 0);
+	return true;
 }
 
 bool GetCharacterRights(TDatabase *Database, int CharacterID, DynamicArray<TCharacterRight> *Rights){
-	return false;
+	ASSERT(Database != NULL && Rights != NULL);
+	const char *Stmt = PrepareQuery(Database,
+			"SELECT Name FROM CharacterRights WHERE CharacterID = $1::INTEGER");
+	if(Stmt == NULL){
+		LOG_ERR("Failed to prepare query");
+		return false;
+	}
+
+	ParamBuffer Params = {};
+	ParamBegin(&Params, 1, 1);
+	ParamInt(&Params, CharacterID);
+	PGresult *Result = PQexecPrepared(Database->Handle, Stmt, Params.NumParams,
+							Params.Values, Params.Lengths, Params.Formats, 1);
+	AutoResultClear ResultGuard(Result);
+	if(PQresultStatus(Result) != PGRES_TUPLES_OK){
+		LOG_ERR("Failed to execute query: %s", PQerrorMessage(Database->Handle));
+		return false;
+	}
+
+	int NumRows = PQntuples(Result);
+	for(int Row = 0; Row < NumRows; Row += 1){
+		TCharacterRight Right = {};
+		StringBufCopy(Right.Name, GetResultText(Result, Row, 0));
+		Rights->Push(Right);
+	}
+
+	return true;
 }
 
-bool GetGuildLeaderStatus(TDatabase *Database, int WorldID, int CharacterID, bool *Result){
+bool GetGuildLeaderStatus(TDatabase *Database, int WorldID, int CharacterID, bool *GuildLeader){
+	ASSERT(Database != NULL && GuildLeader != NULL);
+	// NOTE(fusion): Same as `DecrementIsOnline`.
+	const char *Stmt = PrepareQuery(Database,
+			"SELECT Guild, Rank FROM Characters"
+			" WHERE WorldID = $1::INTEGER AND CharacterID = $2::INTEGER");
+	if(Stmt == NULL){
+		LOG_ERR("Failed to prepare query");
+		return false;
+	}
+
+	ParamBuffer Params = {};
+	ParamBegin(&Params, 2, 1);
+	ParamInt(&Params, WorldID);
+	ParamInt(&Params, CharacterID);
+	PGresult *Result = PQexecPrepared(Database->Handle, Stmt, Params.NumParams,
+							Params.Values, Params.Lengths, Params.Formats, 1);
+	AutoResultClear ResultGuard(Result);
+	if(PQresultStatus(Result) != PGRES_TUPLES_OK){
+		LOG_ERR("Failed to execute query: %s", PQerrorMessage(Database->Handle));
+		return false;
+	}
+
+	*GuildLeader = false;
+	if(PQntuples(Result) > 0){
+		const char *Guild = GetResultText(Result, 0, 0);
+		const char *Rank = GetResultText(Result, 0, 1);
+		if(Guild != NULL && !StringEmpty(Guild) && Rank != NULL && StringEqCI(Rank, "Leader")){
+			*GuildLeader = true;
+		}
+	}
+
 	return false;
 }
 
 bool IncrementIsOnline(TDatabase *Database, int WorldID, int CharacterID){
-	return false;
+	ASSERT(Database != NULL);
+	// NOTE(fusion): Same as `DecrementIsOnline`.
+	const char *Stmt = PrepareQuery(Database,
+			"UPDATE Characters SET IsOnline = IsOnline + 1"
+			" WHERE WorldID = $1::INTEGER AND CharacterID = $2::INTEGER");
+	if(Stmt == NULL){
+		LOG_ERR("Failed to prepare query");
+		return false;
+	}
+
+	ParamBuffer Params = {};
+	ParamBegin(&Params, 2, 1);
+	ParamInt(&Params, WorldID);
+	ParamInt(&Params, CharacterID);
+	PGresult *Result = PQexecPrepared(Database->Handle, Stmt, Params.NumParams,
+							Params.Values, Params.Lengths, Params.Formats, 1);
+	AutoResultClear ResultGuard(Result);
+	if(PQresultStatus(Result) != PGRES_COMMAND_OK){
+		LOG_ERR("Failed to execute query: %s", PQerrorMessage(Database->Handle));
+		return false;
+	}
+
+	return true;
 }
 
 bool DecrementIsOnline(TDatabase *Database, int WorldID, int CharacterID){
-	return false;
+	ASSERT(Database != NULL);
+	// NOTE(fusion): A character is uniquely identified by its id. The world id
+	// check is purely to avoid a world from modifying a character from another
+	// world.
+	const char *Stmt = PrepareQuery(Database,
+			"UPDATE Characters SET IsOnline = IsOnline - 1"
+			" WHERE WorldID = $1::INTEGER AND CharacterID = $2::INTEGER");
+	if(Stmt == NULL){
+		LOG_ERR("Failed to prepare query");
+		return false;
+	}
+
+	ParamBuffer Params = {};
+	ParamBegin(&Params, 2, 1);
+	ParamInt(&Params, WorldID);
+	ParamInt(&Params, CharacterID);
+	PGresult *Result = PQexecPrepared(Database->Handle, Stmt, Params.NumParams,
+							Params.Values, Params.Lengths, Params.Formats, 1);
+	AutoResultClear ResultGuard(Result);
+	if(PQresultStatus(Result) != PGRES_COMMAND_OK){
+		LOG_ERR("Failed to execute query: %s", PQerrorMessage(Database->Handle));
+		return false;
+	}
+
+	return true;
 }
 
 bool ClearIsOnline(TDatabase *Database, int WorldID, int *NumAffectedCharacters){
-	return false;
+	ASSERT(Database != NULL && NumAffectedCharacters != NULL);
+	const char *Stmt = PrepareQuery(Database,
+			"UPDATE Characters SET IsOnline = 0"
+			" WHERE WorldID = $1::INTEGER AND IsOnline != 0");
+	if(Stmt == NULL){
+		LOG_ERR("Failed to prepare query");
+		return false;
+	}
+
+	ParamBuffer Params = {};
+	ParamBegin(&Params, 1, 1);
+	ParamInt(&Params, WorldID);
+	PGresult *Result = PQexecPrepared(Database->Handle, Stmt, Params.NumParams,
+							Params.Values, Params.Lengths, Params.Formats, 1);
+	AutoResultClear ResultGuard(Result);
+	if(PQresultStatus(Result) != PGRES_COMMAND_OK){
+		LOG_ERR("Failed to execute query: %s", PQerrorMessage(Database->Handle));
+		return false;
+	}
+
+	*NumAffectedCharacters = ResultAffectedRows(Result);
+	return true;
 }
 
 bool LogoutCharacter(TDatabase *Database, int WorldID, int CharacterID, int Level,
 		const char *Profession, const char *Residence, int LastLoginTime, int TutorActivities){
-	return false;
+	ASSERT(Database != NULL && Profession != NULL && Residence != NULL);
+	const char *Stmt = PrepareQuery(Database,
+			"UPDATE Characters"
+			" SET Level = $3::INTEGER,"
+				" Profession = $4::TEXT,"
+				" Residence = $5::TEXT,"
+				" LastLoginTime = $6::TIMESTAMPTZ,"
+				" TutorActivities = $7::INTEGER,"
+				" IsOnline = IsOnline - 1"
+			" WHERE WorldID = $1::INTEGER AND CharacterID = $2::INTEGER");
+	if(Stmt == NULL){
+		LOG_ERR("Failed to prepare query");
+		return false;
+	}
+
+	ParamBuffer Params = {};
+	ParamBegin(&Params, 7, 1);
+	ParamInt(&Params, WorldID);
+	ParamInt(&Params, CharacterID);
+	ParamInt(&Params, Level);
+	ParamText(&Params, Profession);
+	ParamText(&Params, Residence);
+	ParamTimestamp(&Params, LastLoginTime);
+	ParamInt(&Params, TutorActivities);
+	PGresult *Result = PQexecPrepared(Database->Handle, Stmt, Params.NumParams,
+							Params.Values, Params.Lengths, Params.Formats, 1);
+	AutoResultClear ResultGuard(Result);
+	if(PQresultStatus(Result) != PGRES_COMMAND_OK){
+		LOG_ERR("Failed to execute query: %s", PQerrorMessage(Database->Handle));
+		return false;
+	}
+
+	return true;
 }
 
 bool GetCharacterIndexEntries(TDatabase *Database, int WorldID, int MinimumCharacterID,
 		int MaxEntries, int *NumEntries, TCharacterIndexEntry *Entries){
-	return false;
+	ASSERT(Database != NULL && MaxEntries > 0 && NumEntries != NULL && Entries != NULL);
+	const char *Stmt = PrepareQuery(Database,
+			"SELECT CharacterID, Name FROM Characters"
+			" WHERE WorldID = $1::INTEGER AND CharacterID >= $2::INTEGER"
+			" ORDER BY CharacterID ASC LIMIT $3::INTEGER");
+	if(Stmt == NULL){
+		LOG_ERR("Failed to prepare query");
+		return false;
+	}
+
+	ParamBuffer Params = {};
+	ParamBegin(&Params, 3, 1);
+	ParamInt(&Params, WorldID);
+	ParamInt(&Params, MinimumCharacterID);
+	ParamInt(&Params, MaxEntries);
+	PGresult *Result = PQexecPrepared(Database->Handle, Stmt, Params.NumParams,
+							Params.Values, Params.Lengths, Params.Formats, 1);
+	AutoResultClear ResultGuard(Result);
+	if(PQresultStatus(Result) != PGRES_TUPLES_OK){
+		LOG_ERR("Failed to execute query: %s", PQerrorMessage(Database->Handle));
+		return false;
+	}
+
+	int NumRows = PQntuples(Result);
+	if(NumRows > MaxEntries){
+		LOG_WARN("Query returned too many rows (expected %d, got %d)", MaxEntries, NumRows);
+		NumRows = MaxEntries;
+	}
+
+	for(int Row = 0; Row < NumRows; Row += 1){
+		Entries[Row].CharacterID = GetResultInt(Result, Row, 0);
+		StringBufCopy(Entries[Row].Name, GetResultText(Result, Row, 1));
+	}
+
+	*NumEntries = NumRows;
+	return true;
 }
 
 bool InsertCharacterDeath(TDatabase *Database, int WorldID, int CharacterID, int Level,
 		int OffenderID, const char *Remark, bool Unjustified, int Timestamp){
-	return false;
+	ASSERT(Database != NULL && Remark != NULL);
+	// NOTE(fusion): Same as `DecrementIsOnline`.
+	const char *Stmt = PrepareQuery(Database,
+			"INSERT INTO CharacterDeaths (CharacterID, Level,"
+				" OffenderID, Remark, Unjustified, Timestamp)"
+			" SELECT $2::INTEGER, $3::INTEGER, $4::INTEGER,"
+					"$5::TEXT, $6::BOOLEAN, $7::TIMESTAMPTZ"
+				" FROM Characters"
+				" WHERE WorldID = $1::INTEGER AND CharacterID = $2::INTEGER");
+	if(Stmt == NULL){
+		LOG_ERR("Failed to prepare query");
+		return false;
+	}
+
+	ParamBuffer Params = {};
+	ParamBegin(&Params, 7, 1);
+	ParamInt(&Params, WorldID);
+	ParamInt(&Params, CharacterID);
+	ParamInt(&Params, Level);
+	ParamInt(&Params, OffenderID);
+	ParamText(&Params, Remark);
+	ParamBool(&Params, Unjustified);
+	ParamTimestamp(&Params, Timestamp);
+	PGresult *Result = PQexecPrepared(Database->Handle, Stmt, Params.NumParams,
+							Params.Values, Params.Lengths, Params.Formats, 1);
+	AutoResultClear ResultGuard(Result);
+	if(PQresultStatus(Result) != PGRES_COMMAND_OK){
+		LOG_ERR("Failed to execute query: %s", PQerrorMessage(Database->Handle));
+		return false;
+	}
+
+	return true;
 }
 
 bool InsertBuddy(TDatabase *Database, int WorldID, int AccountID, int BuddyID){
-	return false;
+	ASSERT(Database != NULL);
+	// NOTE(fusion): Same as `DecrementIsOnline`.
+	// NOTE(fusion): Use the `DO NOTHING` conflict resolution to make duplicate
+	// row errors appear as successful insertions.
+	const char *Stmt = PrepareQuery(Database,
+			"INSERT INTO Buddies (WorldID, AccountID, BuddyID)"
+			" SELECT $1::INTEGER, $2::INTEGER, $3::INTEGER FROM Characters"
+				" WHERE WorldID = $1::INTEGER AND CharacterID = $3::INTEGER"
+			" ON CONFLICT DO NOTHING");
+	if(Stmt == NULL){
+		LOG_ERR("Failed to prepare query");
+		return false;
+	}
+
+	ParamBuffer Params = {};
+	ParamBegin(&Params, 3, 1);
+	ParamInt(&Params, WorldID);
+	ParamInt(&Params, AccountID);
+	ParamInt(&Params, BuddyID);
+	PGresult *Result = PQexecPrepared(Database->Handle, Stmt, Params.NumParams,
+							Params.Values, Params.Lengths, Params.Formats, 1);
+	AutoResultClear ResultGuard(Result);
+	if(PQresultStatus(Result) != PGRES_COMMAND_OK){
+		LOG_ERR("Failed to execute query: %s", PQerrorMessage(Database->Handle));
+		return false;
+	}
+
+	return true;
 }
 
 bool DeleteBuddy(TDatabase *Database, int WorldID, int AccountID, int BuddyID){
-	return false;
+	ASSERT(Database != NULL);
+	const char *Stmt = PrepareQuery(Database,
+			"DELETE FROM Buddies"
+			" WHERE WorldID = $1::INTEGER"
+				" AND AccountID = $2::INTEGER"
+				" AND BuddyID = $3::INTEGER");
+	if(Stmt == NULL){
+		LOG_ERR("Failed to prepare query");
+		return false;
+	}
+
+	ParamBuffer Params = {};
+	ParamBegin(&Params, 3, 1);
+	ParamInt(&Params, WorldID);
+	ParamInt(&Params, AccountID);
+	ParamInt(&Params, BuddyID);
+	PGresult *Result = PQexecPrepared(Database->Handle, Stmt, Params.NumParams,
+							Params.Values, Params.Lengths, Params.Formats, 1);
+	AutoResultClear ResultGuard(Result);
+	if(PQresultStatus(Result) != PGRES_COMMAND_OK){
+		LOG_ERR("Failed to execute query: %s", PQerrorMessage(Database->Handle));
+		return false;
+	}
+
+	return true;
 }
 
 bool GetBuddies(TDatabase *Database, int WorldID, int AccountID, DynamicArray<TAccountBuddy> *Buddies){
-	return false;
+	ASSERT(Database != NULL && Buddies != NULL);
+	const char *Stmt = PrepareQuery(Database,
+			"SELECT B.BuddyID, C.Name"
+			" FROM Buddies AS B"
+			" INNER JOIN Characters AS C"
+				" ON C.WorldID = B.WorldID AND C.CharacterID = B.BuddyID"
+			" WHERE B.WorldID = $1::INTEGER AND B.AccountID = $2::INTEGER");
+	if(Stmt == NULL){
+		LOG_ERR("Failed to prepare query");
+		return false;
+	}
+
+	ParamBuffer Params = {};
+	ParamBegin(&Params, 2, 1);
+	ParamInt(&Params, WorldID);
+	ParamInt(&Params, AccountID);
+	PGresult *Result = PQexecPrepared(Database->Handle, Stmt, Params.NumParams,
+							Params.Values, Params.Lengths, Params.Formats, 1);
+	AutoResultClear ResultGuard(Result);
+	if(PQresultStatus(Result) != PGRES_TUPLES_OK){
+		LOG_ERR("Failed to execute query: %s", PQerrorMessage(Database->Handle));
+		return false;
+	}
+
+	int NumRows = PQntuples(Result);
+	for(int Row = 0; Row < NumRows; Row += 1){
+		TAccountBuddy Buddy = {};
+		Buddy.CharacterID = GetResultInt(Result, Row, 0);
+		StringBufCopy(Buddy.Name, GetResultText(Result, Row, 1));
+		Buddies->Push(Buddy);
+	}
+
+	return true;
 }
 
-bool GetWorldInvitation(TDatabase *Database, int WorldID, int CharacterID, bool *Result){
-	return false;
+bool GetWorldInvitation(TDatabase *Database, int WorldID, int CharacterID, bool *Invited){
+	ASSERT(Database != NULL && Invited != NULL);
+	const char *Stmt = PrepareQuery(Database,
+			"SELECT 1 FROM WorldInvitations"
+			" WHERE WorldID = $1::INTEGER AND CharacterID = $2::INTEGER");
+	if(Stmt == NULL){
+		LOG_ERR("Failed to prepare query");
+		return false;
+	}
+
+	ParamBuffer Params = {};
+	ParamBegin(&Params, 2, 1);
+	ParamInt(&Params, WorldID);
+	ParamInt(&Params, CharacterID);
+	PGresult *Result = PQexecPrepared(Database->Handle, Stmt, Params.NumParams,
+							Params.Values, Params.Lengths, Params.Formats, 1);
+	AutoResultClear ResultGuard(Result);
+	if(PQresultStatus(Result) != PGRES_TUPLES_OK){
+		LOG_ERR("Failed to execute query: %s", PQerrorMessage(Database->Handle));
+		return false;
+	}
+
+	*Invited = (PQntuples(Result) > 0);
+	return true;
 }
 
 bool InsertLoginAttempt(TDatabase *Database, int AccountID, int IPAddress, bool Failed){
-	return false;
+	ASSERT(Database != NULL);
+	const char *Stmt = PrepareQuery(Database,
+			"INSERT INTO LoginAttempts (AccountID, IPAddress, Timestamp, Failed)"
+			" VALUES ($1::INTEGER, $2::INET, CURRENT_TIMESTAMP, $3::BOOLEAN)");
+	if(Stmt == NULL){
+		LOG_ERR("Failed to prepare query");
+		return false;
+	}
+
+	ParamBuffer Params = {};
+	ParamBegin(&Params, 3, 1);
+	ParamInt(&Params, AccountID);
+	ParamIPAddress(&Params, IPAddress);
+	ParamBool(&Params, Failed);
+	PGresult *Result = PQexecPrepared(Database->Handle, Stmt, Params.NumParams,
+							Params.Values, Params.Lengths, Params.Formats, 1);
+	AutoResultClear ResultGuard(Result);
+	if(PQresultStatus(Result) != PGRES_COMMAND_OK){
+		LOG_ERR("Failed to execute query: %s", PQerrorMessage(Database->Handle));
+		return false;
+	}
+
+	return true;
 }
 
-bool GetAccountFailedLoginAttempts(TDatabase *Database, int AccountID, int TimeWindow, int *Result){
-	return false;
+bool GetAccountFailedLoginAttempts(TDatabase *Database, int AccountID, int TimeWindow, int *FailedAttempts){
+	ASSERT(Database != NULL && FailedAttempts != NULL);
+	const char *Stmt = PrepareQuery(Database,
+			"SELECT COUNT(*) FROM LoginAttempts"
+			" WHERE AccountID = $1::INTEGER"
+				" AND (CURRENT_TIMESTAMP - Timestamp) <= $2::INTERVAL"
+				" AND Failed");
+	if(Stmt == NULL){
+		LOG_ERR("Failed to prepare query");
+		return false;
+	}
+
+	ParamBuffer Params = {};
+	ParamBegin(&Params, 2, 1);
+	ParamInt(&Params, AccountID);
+	ParamInterval(&Params, TimeWindow);
+	PGresult *Result = PQexecPrepared(Database->Handle, Stmt, Params.NumParams,
+							Params.Values, Params.Lengths, Params.Formats, 1);
+	AutoResultClear ResultGuard(Result);
+	if(PQresultStatus(Result) != PGRES_TUPLES_OK){
+		LOG_ERR("Failed to execute query: %s", PQerrorMessage(Database->Handle));
+		return false;
+	}
+
+	if(PQntuples(Result) == 0){
+		LOG_ERR("Query returned no rows");
+		return false;
+	}
+
+	*FailedAttempts = GetResultInt(Result, 0, 0);
+	return true;
 }
 
-bool GetIPAddressFailedLoginAttempts(TDatabase *Database, int IPAddress, int TimeWindow, int *Result){
-	return false;
-}
+bool GetIPAddressFailedLoginAttempts(TDatabase *Database, int IPAddress, int TimeWindow, int *FailedAttempts){
+	ASSERT(Database != NULL && FailedAttempts != NULL);
+	const char *Stmt = PrepareQuery(Database,
+			"SELECT COUNT(*) FROM LoginAttempts"
+			" WHERE IPAddress = $1::INET"
+				" AND (CURRENT_TIMESTAMP - Timestamp) <= $2::INTERVAL"
+				" AND Failed");
+	if(Stmt == NULL){
+		LOG_ERR("Failed to prepare query");
+		return false;
+	}
 
+	ParamBuffer Params = {};
+	ParamBegin(&Params, 2, 1);
+	ParamIPAddress(&Params, IPAddress);
+	ParamInterval(&Params, TimeWindow);
+	PGresult *Result = PQexecPrepared(Database->Handle, Stmt, Params.NumParams,
+							Params.Values, Params.Lengths, Params.Formats, 1);
+	AutoResultClear ResultGuard(Result);
+	if(PQresultStatus(Result) != PGRES_TUPLES_OK){
+		LOG_ERR("Failed to execute query: %s", PQerrorMessage(Database->Handle));
+		return false;
+	}
+
+	if(PQntuples(Result) == 0){
+		LOG_ERR("Query returned no rows");
+		return false;
+	}
+
+	*FailedAttempts = GetResultInt(Result, 0, 0);
+	return true;
+}
 
 // House Tables
 //==============================================================================
 bool FinishHouseAuctions(TDatabase *Database, int WorldID, DynamicArray<THouseAuction> *Auctions){
-	return false;
+	ASSERT(Database != NULL && Auctions != NULL);
+	// TODO(fusion): If the application crashes while processing finished auctions,
+	// non processed auctions will be lost but with no other side-effects. It could
+	// be an inconvenience but it's not a big problem.
+	const char *Stmt = PrepareQuery(Database,
+			"DELETE FROM HouseAuctions"
+			" WHERE WorldID = $1::INTEGER"
+				" AND FinishTime IS NOT NULL"
+				" AND FinishTime <= CURRENT_TIMESTAMP"
+			" RETURNING HouseID, BidderID, BidAmount, FinishTime,"
+				" (SELECT Name FROM Characters WHERE CharacterID = BidderID)");
+	if(Stmt == NULL){
+		LOG_ERR("Failed to prepare query");
+		return false;
+	}
+
+	ParamBuffer Params = {};
+	ParamBegin(&Params, 1, 1);
+	ParamInt(&Params, WorldID);
+	PGresult *Result = PQexecPrepared(Database->Handle, Stmt, Params.NumParams,
+							Params.Values, Params.Lengths, Params.Formats, 1);
+	AutoResultClear ResultGuard(Result);
+	if(PQresultStatus(Result) != PGRES_TUPLES_OK){
+		LOG_ERR("Failed to execute query: %s", PQerrorMessage(Database->Handle));
+		return false;
+	}
+
+	int NumRows = PQntuples(Result);
+	for(int Row = 0; Row < NumRows; Row += 1){
+		THouseAuction Auction = {};
+		Auction.HouseID = GetResultInt(Result, Row, 0);
+		Auction.BidderID = GetResultInt(Result, Row, 1);
+		Auction.BidAmount = GetResultInt(Result, Row, 2);
+		Auction.FinishTime = GetResultTimestamp(Result, Row, 3);
+		StringBufCopy(Auction.BidderName, GetResultText(Result, Row, 4));
+		Auctions->Push(Auction);
+	}
+
+	return true;
 }
 
 bool FinishHouseTransfers(TDatabase *Database, int WorldID, DynamicArray<THouseTransfer> *Transfers){
-	return false;
+	ASSERT(Database != NULL && Transfers != NULL);
+	// TODO(fusion): Same as `FinishHouseAuctions` but with house transfers.
+	const char *Stmt = PrepareQuery(Database,
+			"DELETE FROM HouseTransfers"
+			" WHERE WorldID = $1::INTEGER"
+			" RETURNING HouseID, NewOwnerID, Price,"
+				" (SELECT Name FROM Characters WHERE CharacterID = NewOwnerID)");
+	if(Stmt == NULL){
+		LOG_ERR("Failed to prepare query");
+		return false;
+	}
+
+	ParamBuffer Params = {};
+	ParamBegin(&Params, 1, 1);
+	ParamInt(&Params, WorldID);
+	PGresult *Result = PQexecPrepared(Database->Handle, Stmt, Params.NumParams,
+							Params.Values, Params.Lengths, Params.Formats, 1);
+	AutoResultClear ResultGuard(Result);
+	if(PQresultStatus(Result) != PGRES_TUPLES_OK){
+		LOG_ERR("Failed to execute query: %s", PQerrorMessage(Database->Handle));
+		return false;
+	}
+
+	int NumRows = PQntuples(Result);
+	for(int Row = 0; Row < NumRows; Row += 1){
+		THouseTransfer Transfer = {};
+		Transfer.HouseID = GetResultInt(Result, Row, 0);
+		Transfer.NewOwnerID = GetResultInt(Result, Row, 1);
+		Transfer.Price = GetResultInt(Result, Row, 2);
+		StringBufCopy(Transfer.NewOwnerName, GetResultText(Result, Row, 4));
+		Transfers->Push(Transfer);
+	}
+
+	return true;
 }
 
 bool GetFreeAccountEvictions(TDatabase *Database, int WorldID, DynamicArray<THouseEviction> *Evictions){
-	return false;
+	ASSERT(Database != NULL && Evictions != NULL);
+	const char *Stmt = PrepareQuery(Database,
+			"SELECT O.HouseID, O.OwnerID"
+			" FROM HouseOwners AS O"
+			" LEFT JOIN Characters AS C ON C.CharacterID = O.OwnerID"
+			" LEFT JOIN Accounts AS A ON A.AccountID = C.AccountID"
+			" WHERE O.WorldID = $1::INTEGER"
+				" AND (A.PremiumEnd IS NULL OR A.PremiumEnd < CURRENT_TIMESTAMP)");
+	if(Stmt == NULL){
+		LOG_ERR("Failed to prepare query");
+		return false;
+	}
+
+	ParamBuffer Params = {};
+	ParamBegin(&Params, 1, 1);
+	ParamInt(&Params, WorldID);
+	PGresult *Result = PQexecPrepared(Database->Handle, Stmt, Params.NumParams,
+							Params.Values, Params.Lengths, Params.Formats, 1);
+	AutoResultClear ResultGuard(Result);
+	if(PQresultStatus(Result) != PGRES_TUPLES_OK){
+		LOG_ERR("Failed to execute query: %s", PQerrorMessage(Database->Handle));
+		return false;
+	}
+
+	int NumRows = PQntuples(Result);
+	for(int Row = 0; Row < NumRows; Row += 1){
+		THouseEviction Eviction = {};
+		Eviction.HouseID = GetResultInt(Result, Row, 0);
+		Eviction.OwnerID = GetResultInt(Result, Row, 1);
+		Evictions->Push(Eviction);
+	}
+
+	return true;
 }
 
 bool GetDeletedCharacterEvictions(TDatabase *Database, int WorldID, DynamicArray<THouseEviction> *Evictions){
-	return false;
+	ASSERT(Database != NULL && Evictions != NULL);
+	const char *Stmt = PrepareQuery(Database,
+			"SELECT O.HouseID, O.OwnerID"
+			" FROM HouseOwners AS O"
+			" LEFT JOIN Characters AS C ON C.CharacterID = O.OwnerID"
+			" WHERE O.WorldID = $1::INTEGER"
+				" AND (C.CharacterID IS NULL OR C.Deleted)");
+	if(Stmt == NULL){
+		LOG_ERR("Failed to prepare query");
+		return false;
+	}
+
+	ParamBuffer Params = {};
+	ParamBegin(&Params, 1, 1);
+	ParamInt(&Params, WorldID);
+	PGresult *Result = PQexecPrepared(Database->Handle, Stmt, Params.NumParams,
+							Params.Values, Params.Lengths, Params.Formats, 1);
+	AutoResultClear ResultGuard(Result);
+	if(PQresultStatus(Result) != PGRES_TUPLES_OK){
+		LOG_ERR("Failed to execute query: %s", PQerrorMessage(Database->Handle));
+		return false;
+	}
+
+	int NumRows = PQntuples(Result);
+	for(int Row = 0; Row < NumRows; Row += 1){
+		THouseEviction Eviction = {};
+		Eviction.HouseID = GetResultInt(Result, Row, 0);
+		Eviction.OwnerID = GetResultInt(Result, Row, 1);
+		Evictions->Push(Eviction);
+	}
+
+	return true;
 }
 
 bool InsertHouseOwner(TDatabase *Database, int WorldID, int HouseID, int OwnerID, int PaidUntil){
-	return false;
+	ASSERT(Database != NULL);
+	const char *Stmt = PrepareQuery(Database,
+			"INSERT INTO HouseOwners (WorldID, HouseID, OwnerID, PaidUntil)"
+			" VALUES ($1::INTEGER, $2::INTEGER, $3::INTEGER, $4::TIMESTAMPTZ)");
+	if(Stmt == NULL){
+		LOG_ERR("Failed to prepare query");
+		return false;
+	}
+
+	ParamBuffer Params = {};
+	ParamBegin(&Params, 4, 1);
+	ParamInt(&Params, WorldID);
+	ParamInt(&Params, HouseID);
+	ParamInt(&Params, OwnerID);
+	ParamTimestamp(&Params, PaidUntil);
+	PGresult *Result = PQexecPrepared(Database->Handle, Stmt, Params.NumParams,
+							Params.Values, Params.Lengths, Params.Formats, 1);
+	AutoResultClear ResultGuard(Result);
+	if(PQresultStatus(Result) != PGRES_COMMAND_OK){
+		LOG_ERR("Failed to execute query: %s", PQerrorMessage(Database->Handle));
+		return false;
+	}
+
+	return true;
 }
 
 bool UpdateHouseOwner(TDatabase *Database, int WorldID, int HouseID, int OwnerID, int PaidUntil){
-	return false;
+	ASSERT(Database != NULL);
+	const char *Stmt = PrepareQuery(Database,
+			"UPDATE HouseOwners"
+			" SET OwnerID = $3::INTEGER, PaidUntil = $4::TIMESTAMPTZ"
+			" WHERE WorldID = $1::INTEGER AND HouseID = $2::INTEGER");
+	if(Stmt == NULL){
+		LOG_ERR("Failed to prepare query");
+		return false;
+	}
+
+	ParamBuffer Params = {};
+	ParamBegin(&Params, 4, 1);
+	ParamInt(&Params, WorldID);
+	ParamInt(&Params, HouseID);
+	ParamInt(&Params, OwnerID);
+	ParamTimestamp(&Params, PaidUntil);
+	PGresult *Result = PQexecPrepared(Database->Handle, Stmt, Params.NumParams,
+							Params.Values, Params.Lengths, Params.Formats, 1);
+	AutoResultClear ResultGuard(Result);
+	if(PQresultStatus(Result) != PGRES_COMMAND_OK){
+		LOG_ERR("Failed to execute query: %s", PQerrorMessage(Database->Handle));
+		return false;
+	}
+
+	return true;
 }
 
 bool DeleteHouseOwner(TDatabase *Database, int WorldID, int HouseID){
-	return false;
+	ASSERT(Database != NULL);
+	const char *Stmt = PrepareQuery(Database,
+			"DELETE FROM HouseOwners"
+			" WHERE WorldID = $1::INTEGER AND HouseID = $2::INTEGER");
+	if(Stmt == NULL){
+		LOG_ERR("Failed to prepare query");
+		return false;
+	}
+
+	ParamBuffer Params = {};
+	ParamBegin(&Params, 2, 1);
+	ParamInt(&Params, WorldID);
+	ParamInt(&Params, HouseID);
+	PGresult *Result = PQexecPrepared(Database->Handle, Stmt, Params.NumParams,
+							Params.Values, Params.Lengths, Params.Formats, 1);
+	AutoResultClear ResultGuard(Result);
+	if(PQresultStatus(Result) != PGRES_COMMAND_OK){
+		LOG_ERR("Failed to execute query: %s", PQerrorMessage(Database->Handle));
+		return false;
+	}
+
+	return true;
 }
 
 bool GetHouseOwners(TDatabase *Database, int WorldID, DynamicArray<THouseOwner> *Owners){
-	return false;
+	ASSERT(Database != NULL && Owners != NULL);
+	const char *Stmt = PrepareQuery(Database,
+			"SELECT O.HouseID, O.OwnerID, C.Name, O.PaidUntil"
+			" FROM HouseOwners AS O"
+			" LEFT JOIN Characters AS C ON C.CharacterID = O.OwnerID"
+			" WHERE O.WorldID = $1::INTEGER");
+	if(Stmt == NULL){
+		LOG_ERR("Failed to prepare query");
+		return false;
+	}
+
+	ParamBuffer Params = {};
+	ParamBegin(&Params, 1, 1);
+	ParamInt(&Params, WorldID);
+	PGresult *Result = PQexecPrepared(Database->Handle, Stmt, Params.NumParams,
+							Params.Values, Params.Lengths, Params.Formats, 1);
+	AutoResultClear ResultGuard(Result);
+	if(PQresultStatus(Result) != PGRES_TUPLES_OK){
+		LOG_ERR("Failed to execute query: %s", PQerrorMessage(Database->Handle));
+		return false;
+	}
+
+	int NumRows = PQntuples(Result);
+	for(int Row = 0; Row < NumRows; Row += 1){
+		THouseOwner Owner = {};
+		Owner.HouseID = GetResultInt(Result, Row, 0);
+		Owner.OwnerID = GetResultInt(Result, Row, 1);
+		StringBufCopy(Owner.OwnerName, GetResultText(Result, Row, 2));
+		Owner.PaidUntil = GetResultTimestamp(Result, Row, 3);
+		Owners->Push(Owner);
+	}
+
+	return true;
 }
 
 bool GetHouseAuctions(TDatabase *Database, int WorldID, DynamicArray<int> *Auctions){
-	return false;
+	ASSERT(Database != NULL && Auctions != NULL);
+	const char *Stmt = PrepareQuery(Database,
+			"SELECT HouseID FROM HouseAuctions WHERE WorldID = $1::INTEGER");
+	if(Stmt == NULL){
+		LOG_ERR("Failed to prepare query");
+		return false;
+	}
+
+	ParamBuffer Params = {};
+	ParamBegin(&Params, 1, 1);
+	ParamInt(&Params, WorldID);
+	PGresult *Result = PQexecPrepared(Database->Handle, Stmt, Params.NumParams,
+							Params.Values, Params.Lengths, Params.Formats, 1);
+	AutoResultClear ResultGuard(Result);
+	if(PQresultStatus(Result) != PGRES_TUPLES_OK){
+		LOG_ERR("Failed to execute query: %s", PQerrorMessage(Database->Handle));
+		return false;
+	}
+
+	int NumRows = PQntuples(Result);
+	for(int Row = 0; Row < NumRows; Row += 1){
+		Auctions->Push(GetResultInt(Result, Row, 0));
+	}
+
+	return true;
 }
 
 bool StartHouseAuction(TDatabase *Database, int WorldID, int HouseID){
-	return false;
+	ASSERT(Database != NULL);
+	const char *Stmt = PrepareQuery(Database,
+			"INSERT INTO HouseAuctions (WorldID, HouseID)"
+			" VALUES ($1::INTEGER, $2::INTEGER)");
+	if(Stmt == NULL){
+		LOG_ERR("Failed to prepare query");
+		return false;
+	}
+
+	ParamBuffer Params = {};
+	ParamBegin(&Params, 2, 1);
+	ParamInt(&Params, WorldID);
+	ParamInt(&Params, HouseID);
+	PGresult *Result = PQexecPrepared(Database->Handle, Stmt, Params.NumParams,
+							Params.Values, Params.Lengths, Params.Formats, 1);
+	AutoResultClear ResultGuard(Result);
+	if(PQresultStatus(Result) != PGRES_COMMAND_OK){
+		LOG_ERR("Failed to execute query: %s", PQerrorMessage(Database->Handle));
+		return false;
+	}
+
+	return true;
 }
 
 bool DeleteHouses(TDatabase *Database, int WorldID){
-	return false;
+	ASSERT(Database != NULL);
+	const char *Stmt = PrepareQuery(Database,
+			"DELETE FROM Houses WHERE WorldID = $1::INTEGER");
+	if(Stmt == NULL){
+		LOG_ERR("Failed to prepare query");
+		return false;
+	}
+
+	ParamBuffer Params = {};
+	ParamBegin(&Params, 1, 1);
+	ParamInt(&Params, WorldID);
+	PGresult *Result = PQexecPrepared(Database->Handle, Stmt, Params.NumParams,
+							Params.Values, Params.Lengths, Params.Formats, 1);
+	AutoResultClear ResultGuard(Result);
+	if(PQresultStatus(Result) != PGRES_COMMAND_OK){
+		LOG_ERR("Failed to execute query: %s", PQerrorMessage(Database->Handle));
+		return false;
+	}
+
+	return true;
 }
 
 bool InsertHouses(TDatabase *Database, int WorldID, int NumHouses, THouse *Houses){
-	return false;
+	ASSERT(Database != NULL && NumHouses > 0 && Houses != NULL);
+	const char *Stmt = PrepareQuery(Database,
+			"INSERT INTO Houses (WorldID, HouseID, Name, Rent, Description,"
+				" Size, PositionX, PositionY, PositionZ, Town, GuildHouse)"
+			" VALUES ($1::INTEGER, $2::INTEGER, $3::TEXT, $4::INTEGER, $5::TEXT,"
+				" $6::INTEGER, $7::INTEGER, $8::INTEGER, $9::INTEGER, $10::TEXT,"
+				" $11::BOOLEAN)");
+	if(Stmt == NULL){
+		LOG_ERR("Failed to prepare query");
+		return false;
+	}
+
+	// TODO(fusion): We could use pipelining to speed up multiple inserts but I'm
+	// not sure the complexity increase would warrant any speed-ups.
+	ParamBuffer Params = {};
+	for(int i = 0; i < NumHouses; i += 1){
+		ParamBegin(&Params, 11, 1);
+		ParamInt(&Params, WorldID);
+		ParamInt(&Params, Houses[i].HouseID);
+		ParamText(&Params, Houses[i].Name);
+		ParamInt(&Params, Houses[i].Rent);
+		ParamText(&Params, Houses[i].Description);
+		ParamInt(&Params, Houses[i].Size);
+		ParamInt(&Params, Houses[i].PositionX);
+		ParamInt(&Params, Houses[i].PositionY);
+		ParamInt(&Params, Houses[i].PositionZ);
+		ParamText(&Params, Houses[i].Town);
+		ParamBool(&Params, Houses[i].GuildHouse);
+		PGresult *Result = PQexecPrepared(Database->Handle, Stmt, Params.NumParams,
+								Params.Values, Params.Lengths, Params.Formats, 1);
+		AutoResultClear ResultGuard(Result);
+		if(PQresultStatus(Result) != PGRES_COMMAND_OK){
+			LOG_ERR("Failed to insert house %d: %s",
+					Houses[i].HouseID,
+					PQerrorMessage(Database->Handle));
+			return false;
+		}
+	}
+
+	return true;
 }
 
 bool ExcludeFromAuctions(TDatabase *Database, int WorldID, int CharacterID, int Duration, int BanishmentID){
-	return false;
-}
+	ASSERT(Database != NULL);
+	// NOTE(fusion): Same as `DecrementIsOnline`.
+	const char *Stmt = PrepareQuery(Database,
+			"INSERT INTO HouseAuctionExclusions (CharacterID, Issued, Until, BanishmentID)"
+			" SELECT $2::INTEGER, CURRENT_TIMESTAMP, (CURRENT_TIMESTAMP + $3::INTERVAL), $4::INTEGER"
+				" FROM Characters"
+				" WHERE WorldID = $1::INTEGER AND CharacterID = $2::INTEGER");
+	if(Stmt == NULL){
+		LOG_ERR("Failed to prepare query");
+		return false;
+	}
 
+	ParamBuffer Params = {};
+	ParamBegin(&Params, 4, 1);
+	ParamInt(&Params, WorldID);
+	ParamInt(&Params, CharacterID);
+	ParamInterval(&Params, Duration);
+	ParamInt(&Params, BanishmentID);
+	PGresult *Result = PQexecPrepared(Database->Handle, Stmt, Params.NumParams,
+							Params.Values, Params.Lengths, Params.Formats, 1);
+	AutoResultClear ResultGuard(Result);
+	if(PQresultStatus(Result) != PGRES_COMMAND_OK){
+		LOG_ERR("Failed to execute query: %s", PQerrorMessage(Database->Handle));
+		return false;
+	}
+
+	return true;
+}
 
 // Banishment Tables
 //==============================================================================
-bool IsCharacterNamelocked(TDatabase *Database, int CharacterID, bool *Result){
-	return false;
+bool IsCharacterNamelocked(TDatabase *Database, int CharacterID, bool *Namelocked){
+	ASSERT(Database != NULL && Namelocked != NULL);
+	TNamelockStatus Status;
+	if(!GetNamelockStatus(Database, CharacterID, &Status)){
+		return false;
+	}
+
+	*Namelocked = Status.Namelocked && !Status.Approved;
+	return true;
 }
 
 bool GetNamelockStatus(TDatabase *Database, int CharacterID, TNamelockStatus *Status){
-	return false;
+	ASSERT(Database != NULL && Status != NULL);
+	const char *Stmt = PrepareQuery(Database,
+			"SELECT Approved FROM Namelocks WHERE CharacterID = $1::INTEGER");
+	if(Stmt == NULL){
+		LOG_ERR("Failed to prepare query");
+		return false;
+	}
+
+	ParamBuffer Params = {};
+	ParamBegin(&Params, 1, 1);
+	ParamInt(&Params, CharacterID);
+	PGresult *Result = PQexecPrepared(Database->Handle, Stmt, Params.NumParams,
+							Params.Values, Params.Lengths, Params.Formats, 1);
+	AutoResultClear ResultGuard(Result);
+	if(PQresultStatus(Result) != PGRES_TUPLES_OK){
+		LOG_ERR("Failed to execute query: %s", PQerrorMessage(Database->Handle));
+		return false;
+	}
+
+	memset(Status, 0, sizeof(TNamelockStatus));
+	Status->Namelocked = (PQntuples(Result) > 0);
+	if(Status->Namelocked){
+		Status->Approved = GetResultBool(Result, 0, 0);
+	}
+
+	return true;
 }
 
 bool InsertNamelock(TDatabase *Database, int CharacterID, int IPAddress,
 		int GamemasterID, const char *Reason, const char *Comment){
-	return false;
+	ASSERT(Database != NULL && Reason != NULL && Comment != NULL);
+	const char *Stmt = PrepareQuery(Database,
+			"INSERT INTO Namelocks (CharacterID, IPAddress, GamemasterID, Reason, Comment)"
+			" VALUES ($1::INTEGER, $2::INET, $3::INTEGER, $4::TEXT, $5::TEXT)");
+	if(Stmt == NULL){
+		LOG_ERR("Failed to prepare query");
+		return false;
+	}
+
+	ParamBuffer Params = {};
+	ParamBegin(&Params, 5, 1);
+	ParamInt(&Params, CharacterID);
+	ParamIPAddress(&Params, IPAddress);
+	ParamInt(&Params, GamemasterID);
+	ParamText(&Params, Reason);
+	ParamText(&Params, Comment);
+	PGresult *Result = PQexecPrepared(Database->Handle, Stmt, Params.NumParams,
+							Params.Values, Params.Lengths, Params.Formats, 1);
+	AutoResultClear ResultGuard(Result);
+	if(PQresultStatus(Result) != PGRES_COMMAND_OK){
+		LOG_ERR("Failed to execute query: %s", PQerrorMessage(Database->Handle));
+		return false;
+	}
+
+	return true;
 }
 
-bool IsAccountBanished(TDatabase *Database, int AccountID, bool *Result){
-	return false;
+bool IsAccountBanished(TDatabase *Database, int AccountID, bool *Banished){
+	ASSERT(Database != NULL && Banished != NULL);
+	const char *Stmt = PrepareQuery(Database,
+			"SELECT 1 FROM Banishments"
+			" WHERE AccountID = $1::INTEGER"
+				" AND (Until = Issued OR Until > CURRENT_TIMESTAMP)");
+	if(Stmt == NULL){
+		LOG_ERR("Failed to prepare query");
+		return false;
+	}
+
+	ParamBuffer Params = {};
+	ParamBegin(&Params, 1, 1);
+	ParamInt(&Params, AccountID);
+	PGresult *Result = PQexecPrepared(Database->Handle, Stmt, Params.NumParams,
+							Params.Values, Params.Lengths, Params.Formats, 1);
+	AutoResultClear ResultGuard(Result);
+	if(PQresultStatus(Result) != PGRES_TUPLES_OK){
+		LOG_ERR("Failed to execute query: %s", PQerrorMessage(Database->Handle));
+		return false;
+	}
+
+	*Banished = (PQntuples(Result) > 0);
+	return true;
 }
 
 bool GetBanishmentStatus(TDatabase *Database, int CharacterID, TBanishmentStatus *Status){
-	return false;
+	ASSERT(Database != NULL && Status != NULL);
+	const char *Stmt = PrepareQuery(Database,
+			"SELECT B.FinalWarning, (B.Until = B.Issued OR B.Until > CURRENT_TIMESTAMP)"
+			" FROM Banishments AS B"
+			" LEFT JOIN Characters AS C ON C.AccountID = B.AccountID"
+			" WHERE C.CharacterID = $1::INTEGER");
+	if(Stmt == NULL){
+		LOG_ERR("Failed to prepare query");
+		return false;
+	}
+
+	ParamBuffer Params = {};
+	ParamBegin(&Params, 1, 1);
+	ParamInt(&Params, CharacterID);
+	PGresult *Result = PQexecPrepared(Database->Handle, Stmt, Params.NumParams,
+							Params.Values, Params.Lengths, Params.Formats, 1);
+	AutoResultClear ResultGuard(Result);
+	if(PQresultStatus(Result) != PGRES_TUPLES_OK){
+		LOG_ERR("Failed to execute query: %s", PQerrorMessage(Database->Handle));
+		return false;
+	}
+
+	int NumRows = 0;
+	memset(Status, 0, sizeof(TBanishmentStatus));
+	for(int Row = 0; Row < NumRows; Row += 1){
+		Status->TimesBanished += 1;
+
+		if(GetResultBool(Result, Row, 0)){
+			Status->FinalWarning = true;
+		}
+
+		if(GetResultBool(Result, Row, 1)){
+			Status->Banished = true;
+		}
+	}
+
+	return true;
 }
 
 bool InsertBanishment(TDatabase *Database, int CharacterID, int IPAddress, int GamemasterID,
 		const char *Reason, const char *Comment, bool FinalWarning, int Duration, int *BanishmentID){
-	return false;
+	ASSERT(Database != NULL && Reason != NULL && Comment != NULL && BanishmentID != NULL);
+	const char *Stmt = PrepareQuery(Database,
+			"INSERT INTO Banishments (AccountID, IPAddress, GamemasterID,"
+				" Reason, Comment, FinalWarning, Issued, Until)"
+			" SELECT AccountID, $2::INET, $3::INTEGER, $4::TEXT, $5::TEXT,"
+					" $6::BOOLEAN, CURRENT_TIMESTAMP, (CURRENT_TIMESTAMP + $7::INTERVAL)"
+				" FROM Characters WHERE CharacterID = $1::INTEGER"
+			" RETURNING BanishmentID");
+	if(Stmt == NULL){
+		LOG_ERR("Failed to prepare query");
+		return false;
+	}
+
+	ParamBuffer Params = {};
+	ParamBegin(&Params, 7, 1);
+	ParamInt(&Params, CharacterID);
+	ParamIPAddress(&Params, IPAddress);
+	ParamInt(&Params, GamemasterID);
+	ParamText(&Params, Reason);
+	ParamText(&Params, Comment);
+	ParamBool(&Params, FinalWarning);
+	ParamInterval(&Params, Duration);
+	PGresult *Result = PQexecPrepared(Database->Handle, Stmt, Params.NumParams,
+							Params.Values, Params.Lengths, Params.Formats, 1);
+	AutoResultClear ResultGuard(Result);
+	if(PQresultStatus(Result) != PGRES_TUPLES_OK){
+		LOG_ERR("Failed to execute query: %s", PQerrorMessage(Database->Handle));
+		return false;
+	}
+
+	*BanishmentID = (PQntuples(Result) > 0 ? GetResultInt(Result, 0, 0) : 0);
+	return true;
 }
 
-bool GetNotationCount(TDatabase *Database, int CharacterID, int *Result){
-	return false;
+bool GetNotationCount(TDatabase *Database, int CharacterID, int *Notations){
+	ASSERT(Database != NULL && Notations != NULL);
+	const char *Stmt = PrepareQuery(Database,
+			"SELECT COUNT(*) FROM Notations WHERE CharacterID = $1::INTEGER");
+	if(Stmt == NULL){
+		LOG_ERR("Failed to prepare query");
+		return false;
+	}
+
+	ParamBuffer Params = {};
+	ParamBegin(&Params, 1, 1);
+	ParamInt(&Params, CharacterID);
+	PGresult *Result = PQexecPrepared(Database->Handle, Stmt, Params.NumParams,
+							Params.Values, Params.Lengths, Params.Formats, 1);
+	AutoResultClear ResultGuard(Result);
+	if(PQresultStatus(Result) != PGRES_TUPLES_OK){
+		LOG_ERR("Failed to execute query: %s", PQerrorMessage(Database->Handle));
+		return false;
+	}
+
+	if(PQntuples(Result) == 0){
+		LOG_ERR("Query returned no rows");
+		return false;
+	}
+
+	*Notations = GetResultInt(Result, 0, 0);
+	return true;
 }
 
 bool InsertNotation(TDatabase *Database, int CharacterID, int IPAddress,
 		int GamemasterID, const char *Reason, const char *Comment){
-	return false;
+	ASSERT(Database != NULL && Reason != NULL && Comment != NULL);
+	const char *Stmt = PrepareQuery(Database,
+			"INSERT INTO Notations (CharacterID, IPAddress, GamemasterID, Reason, Comment)"
+			" VALUES ($1::INTEGER, $2::INET, $3::INTEGER, $4::TEXT, $5::TEXT)");
+	if(Stmt == NULL){
+		LOG_ERR("Failed to prepare query");
+		return false;
+	}
+
+	ParamBuffer Params = {};
+	ParamBegin(&Params, 5, 1);
+	ParamInt(&Params, CharacterID);
+	ParamIPAddress(&Params, IPAddress);
+	ParamInt(&Params, GamemasterID);
+	ParamText(&Params, Reason);
+	ParamText(&Params, Comment);
+	PGresult *Result = PQexecPrepared(Database->Handle, Stmt, Params.NumParams,
+							Params.Values, Params.Lengths, Params.Formats, 1);
+	AutoResultClear ResultGuard(Result);
+	if(PQresultStatus(Result) != PGRES_COMMAND_OK){
+		LOG_ERR("Failed to execute query: %s", PQerrorMessage(Database->Handle));
+		return false;
+	}
+
+	return true;
 }
 
-bool IsIPBanished(TDatabase *Database, int IPAddress, bool *Result){
-	return false;
+bool IsIPBanished(TDatabase *Database, int IPAddress, bool *Banished){
+	ASSERT(Database != NULL && Banished != NULL);
+	const char *Stmt = PrepareQuery(Database,
+			"SELECT 1 FROM IPBanishments"
+			" WHERE IPAddress = $1::INET"
+				" AND (Until = Issued OR Until > CURRENT_TIMESTAMP)");
+	if(Stmt == NULL){
+		LOG_ERR("Failed to prepare query");
+		return false;
+	}
+
+	ParamBuffer Params = {};
+	ParamBegin(&Params, 1, 1);
+	ParamIPAddress(&Params, IPAddress);
+	PGresult *Result = PQexecPrepared(Database->Handle, Stmt, Params.NumParams,
+							Params.Values, Params.Lengths, Params.Formats, 1);
+	AutoResultClear ResultGuard(Result);
+	if(PQresultStatus(Result) != PGRES_TUPLES_OK){
+		LOG_ERR("Failed to execute query: %s", PQerrorMessage(Database->Handle));
+		return false;
+	}
+
+	*Banished = (PQntuples(Result) > 0);
+	return true;
 }
 
 bool InsertIPBanishment(TDatabase *Database, int CharacterID, int IPAddress,
 		int GamemasterID, const char *Reason, const char *Comment, int Duration){
-	return false;
+	ASSERT(Database != NULL && Reason != NULL && Comment != NULL);
+	const char *Stmt = PrepareQuery(Database,
+			"INSERT INTO IPBanishments (CharacterID, IPAddress,"
+				" GamemasterID, Reason, Comment, Issued, Until)"
+			" VALUES ($1::INTEGER, $2::INET, $3::INTEGER, $4::TEXT,"
+				" $5::TEXT, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP + $6::INTERVAL)");
+	if(Stmt == NULL){
+		LOG_ERR("Failed to prepare query");
+		return false;
+	}
+
+	ParamBuffer Params = {};
+	ParamBegin(&Params, 6, 1);
+	ParamInt(&Params, CharacterID);
+	ParamIPAddress(&Params, IPAddress);
+	ParamInt(&Params, GamemasterID);
+	ParamText(&Params, Reason);
+	ParamText(&Params, Comment);
+	ParamInterval(&Params, Duration);
+	PGresult *Result = PQexecPrepared(Database->Handle, Stmt, Params.NumParams,
+							Params.Values, Params.Lengths, Params.Formats, 1);
+	AutoResultClear ResultGuard(Result);
+	if(PQresultStatus(Result) != PGRES_COMMAND_OK){
+		LOG_ERR("Failed to execute query: %s", PQerrorMessage(Database->Handle));
+		return false;
+	}
+
+	return true;
 }
 
-bool IsStatementReported(TDatabase *Database, int WorldID, TStatement *Statement, bool *Result){
-	return false;
+bool IsStatementReported(TDatabase *Database, int WorldID, TStatement *Statement, bool *Reported){
+	ASSERT(Database != NULL && Statement != NULL && Reported != NULL);
+	const char *Stmt = PrepareQuery(Database,
+			"SELECT 1 FROM Statements"
+			" WHERE WorldID = $1::INTEGER"
+				" AND Timestamp = $2::TIMESTAMPTZ"
+				" AND StatementID = $3::INTEGER");
+	if(Stmt == NULL){
+		LOG_ERR("Failed to prepare query");
+		return false;
+	}
+
+	ParamBuffer Params = {};
+	ParamBegin(&Params, 3, 1);
+	ParamInt(&Params, WorldID);
+	ParamTimestamp(&Params, Statement->Timestamp);
+	ParamInt(&Params, Statement->StatementID);
+	PGresult *Result = PQexecPrepared(Database->Handle, Stmt, Params.NumParams,
+							Params.Values, Params.Lengths, Params.Formats, 1);
+	AutoResultClear ResultGuard(Result);
+	if(PQresultStatus(Result) != PGRES_TUPLES_OK){
+		LOG_ERR("Failed to execute query: %s", PQerrorMessage(Database->Handle));
+		return false;
+	}
+
+	*Reported = (PQntuples(Result) > 0);
+	return true;
 }
 
 bool InsertStatements(TDatabase *Database, int WorldID, int NumStatements, TStatement *Statements){
-	return false;
+	// NOTE(fusion): Use the `DO NOTHING` conflict resolution because different
+	// reports may include the same statements for context and I assume it's not
+	// uncommon to see overlaps.
+	ASSERT(Database != NULL && NumStatements > 0 && Statements != NULL);
+	const char *Stmt = PrepareQuery(Database,
+			"INSERT INTO Statements (WorldID, Timestamp, StatementID, CharacterID, Channel, Text)"
+			" VALUES ($1::INTEGER, $2::TIMESTAMPTZ, $3::INTEGER, $4::INTEGER, $5::TEXT, $6::TEXT)"
+			" ON CONFLICT DO NOTHING");
+	if(Stmt == NULL){
+		LOG_ERR("Failed to prepare query");
+		return false;
+	}
+
+	ParamBuffer Params = {};
+	for(int i = 0; i < NumStatements; i += 1){
+		if(Statements[i].StatementID == 0){
+			LOG_WARN("Skipping statement without id");
+			continue;
+		}
+
+		ParamBegin(&Params, 6, 1);
+		ParamInt(&Params, WorldID);
+		ParamTimestamp(&Params, Statements[i].Timestamp);
+		ParamInt(&Params, Statements[i].StatementID);
+		ParamInt(&Params, Statements[i].CharacterID);
+		ParamText(&Params, Statements[i].Channel);
+		ParamText(&Params, Statements[i].Text);
+		PGresult *Result = PQexecPrepared(Database->Handle, Stmt, Params.NumParams,
+								Params.Values, Params.Lengths, Params.Formats, 1);
+		AutoResultClear ResultGuard(Result);
+		if(PQresultStatus(Result) != PGRES_COMMAND_OK){
+			LOG_ERR("Failed to insert statement %d: %s",
+					Statements[i].StatementID,
+					PQerrorMessage(Database->Handle));
+			return false;
+		}
+	}
+
+	return true;
 }
 
 bool InsertReportedStatement(TDatabase *Database, int WorldID, TStatement *Statement,
 		int BanishmentID, int ReporterID, const char *Reason, const char *Comment){
-	return false;
-}
+	ASSERT(Database != NULL && Statement != NULL && Reason != NULL && Comment != NULL);
+	const char *Stmt = PrepareQuery(Database,
+			"INSERT INTO ReportedStatements (WorldID, Timestamp, StatementID,"
+				" CharacterID, BanishmentID, ReporterID, Reason, Comment)"
+			" VALUES ($1::INTEGER, $2::TIMESTAMPTZ, $3::INTEGER, $4::INTEGER,"
+				" $5::INTEGER, $6::INTEGER, $7::TEXT, $8::TEXT)");
+	if(Stmt == NULL){
+		LOG_ERR("Failed to prepare query");
+		return false;
+	}
 
+	ParamBuffer Params = {};
+	ParamBegin(&Params, 8, 1);
+	ParamInt(&Params, WorldID);
+	ParamTimestamp(&Params, Statement->Timestamp);
+	ParamInt(&Params, Statement->StatementID);
+	ParamInt(&Params, Statement->CharacterID);
+	ParamInt(&Params, BanishmentID);
+	ParamInt(&Params, ReporterID);
+	ParamText(&Params, Reason);
+	ParamText(&Params, Comment);
+	PGresult *Result = PQexecPrepared(Database->Handle, Stmt, Params.NumParams,
+							Params.Values, Params.Lengths, Params.Formats, 1);
+	AutoResultClear ResultGuard(Result);
+	if(PQresultStatus(Result) != PGRES_COMMAND_OK){
+		LOG_ERR("Failed to execute query: %s", PQerrorMessage(Database->Handle));
+		return false;
+	}
+
+	return true;
+}
 
 // Info Tables
 //==============================================================================
 bool GetKillStatistics(TDatabase *Database, int WorldID, DynamicArray<TKillStatistics> *Stats){
-	return false;
+	ASSERT(Database != NULL && Stats != NULL);
+	const char *Stmt = PrepareQuery(Database,
+			"SELECT RaceName, TimesKilled, PlayersKilled"
+			" FROM KillStatistics WHERE WorldID = $1::INTEGER");
+	if(Stmt == NULL){
+		LOG_ERR("Failed to prepare query");
+		return false;
+	}
+
+	ParamBuffer Params = {};
+	ParamBegin(&Params, 1, 1);
+	ParamInt(&Params, WorldID);
+	PGresult *Result = PQexecPrepared(Database->Handle, Stmt, Params.NumParams,
+							Params.Values, Params.Lengths, Params.Formats, 1);
+	AutoResultClear ResultGuard(Result);
+	if(PQresultStatus(Result) != PGRES_TUPLES_OK){
+		LOG_ERR("Failed to execute query: %s", PQerrorMessage(Database->Handle));
+		return false;
+	}
+
+	int NumRows = PQntuples(Result);
+	for(int Row = 0; Row < NumRows; Row += 1){
+		TKillStatistics Entry = {};
+		StringBufCopy(Entry.RaceName, GetResultText(Result, Row, 0));
+		Entry.TimesKilled = GetResultInt(Result, Row, 1);
+		Entry.PlayersKilled = GetResultInt(Result, Row, 2);
+		Stats->Push(Entry);
+	}
+
+	return true;
 }
 
 bool MergeKillStatistics(TDatabase *Database, int WorldID, int NumStats, TKillStatistics *Stats){
-	return false;
+	ASSERT(Database != NULL && NumStats > 0 && Stats != NULL);
+	const char *Stmt = PrepareQuery(Database,
+			"INSERT INTO KillStatistics (WorldID, RaceName, TimesKilled, PlayersKilled)"
+			" VALUES ($1::INTEGER, $2::TEXT, $3::INTEGER, $4::INTEGER)"
+			" ON CONFLICT DO UPDATE SET TimesKilled = TimesKilled + EXCLUDED.TimesKilled,"
+									" PlayersKilled = PlayersKilled + EXCLUDED.PlayersKilled");
+	if(Stmt == NULL){
+		LOG_ERR("Failed to prepare query");
+		return false;
+	}
+
+	ParamBuffer Params = {};
+	for(int i = 0; i < NumStats; i += 1){
+		ParamBegin(&Params, 4, 1);
+		ParamInt(&Params, WorldID);
+		ParamText(&Params, Stats[i].RaceName);
+		ParamInt(&Params, Stats[i].TimesKilled);
+		ParamInt(&Params, Stats[i].PlayersKilled);
+		PGresult *Result = PQexecPrepared(Database->Handle, Stmt, Params.NumParams,
+								Params.Values, Params.Lengths, Params.Formats, 1);
+		AutoResultClear ResultGuard(Result);
+		if(PQresultStatus(Result) != PGRES_COMMAND_OK){
+			LOG_ERR("Failed to merge \"%s\" stats: %s",
+		   			Stats[i].RaceName,
+					PQerrorMessage(Database->Handle));
+			return false;
+		}
+	}
+
+	return true;
 }
 
 bool GetOnlineCharacters(TDatabase *Database, int WorldID, DynamicArray<TOnlineCharacter> *Characters){
-	return false;
+	ASSERT(Database != NULL && Characters != NULL);
+	const char *Stmt = PrepareQuery(Database,
+			"SELECT Name, Level, Profession"
+			" FROM OnlineCharacters WHERE WorldID = $1::INTEGER");
+	if(Stmt == NULL){
+		LOG_ERR("Failed to prepare query");
+		return false;
+	}
+
+	ParamBuffer Params = {};
+	ParamBegin(&Params, 1, 1);
+	ParamInt(&Params, WorldID);
+	PGresult *Result = PQexecPrepared(Database->Handle, Stmt, Params.NumParams,
+							Params.Values, Params.Lengths, Params.Formats, 1);
+	AutoResultClear ResultGuard(Result);
+	if(PQresultStatus(Result) != PGRES_TUPLES_OK){
+		LOG_ERR("Failed to execute query: %s", PQerrorMessage(Database->Handle));
+		return false;
+	}
+
+	int NumRows = PQntuples(Result);
+	for(int Row = 0; Row < NumRows; Row += 1){
+		TOnlineCharacter Character = {};
+		StringBufCopy(Character.Name, GetResultText(Result, Row, 0));
+		Character.Level = GetResultInt(Result, Row, 1);
+		StringBufCopy(Character.Profession, GetResultText(Result, Row, 2));
+		Characters->Push(Character);
+	}
+
+	return true;
 }
 
 bool DeleteOnlineCharacters(TDatabase *Database, int WorldID){
-	return false;
+	ASSERT(Database != NULL);
+	const char *Stmt = PrepareQuery(Database,
+			"DELETE FROM OnlineCharacters WHERE WorldID = $1::INTEGER");
+	if(Stmt == NULL){
+		LOG_ERR("Failed to prepare query");
+		return false;
+	}
+
+	ParamBuffer Params = {};
+	ParamBegin(&Params, 1, 1);
+	ParamInt(&Params, WorldID);
+	PGresult *Result = PQexecPrepared(Database->Handle, Stmt, Params.NumParams,
+							Params.Values, Params.Lengths, Params.Formats, 1);
+	AutoResultClear ResultGuard(Result);
+	if(PQresultStatus(Result) != PGRES_COMMAND_OK){
+		LOG_ERR("Failed to execute query: %s", PQerrorMessage(Database->Handle));
+		return false;
+	}
+
+	return true;
 }
 
 bool InsertOnlineCharacters(TDatabase *Database, int WorldID,
 		int NumCharacters, TOnlineCharacter *Characters){
-	return false;
+	ASSERT(Database != NULL && Characters != NULL);
+	const char *Stmt = PrepareQuery(Database,
+			"INSERT INTO OnlineCharacters (WorldID, Name, Level, Profession)"
+			" VALUES ($1::INTEGER, $2::TEXT, $3::INTEGER, $4::TEXT)");
+	if(Stmt == NULL){
+		LOG_ERR("Failed to prepare query");
+		return false;
+	}
+
+	ParamBuffer Params = {};
+	for(int i = 0; i < NumCharacters; i += 1){
+		ParamBegin(&Params, 4, 1);
+		ParamInt(&Params, WorldID);
+		ParamText(&Params, Characters[i].Name);
+		ParamInt(&Params, Characters[i].Level);
+		ParamText(&Params, Characters[i].Profession);
+		PGresult *Result = PQexecPrepared(Database->Handle, Stmt, Params.NumParams,
+								Params.Values, Params.Lengths, Params.Formats, 1);
+		AutoResultClear ResultGuard(Result);
+		if(PQresultStatus(Result) != PGRES_COMMAND_OK){
+			LOG_ERR("Failed to insert character \"%s\": %s",
+					Characters[i].Name,
+					PQerrorMessage(Database->Handle));
+			return false;
+		}
+	}
+
+	return true;
 }
 
 bool CheckOnlineRecord(TDatabase *Database, int WorldID, int NumCharacters, bool *NewRecord){
-	return false;
+	ASSERT(Database != NULL && NewRecord != NULL);
+	const char *Stmt = PrepareQuery(Database,
+			"UPDATE Worlds SET OnlineRecord = $2::INTEGER,"
+				" OnlineRecordTimestamp = CURRENT_TIMESTAMP"
+			" WHERE WorldID = $1::INTEGER AND OnlineRecord < $2::INTEGER");
+	if(Stmt == NULL){
+		LOG_ERR("Failed to prepare query");
+		return false;
+	}
+
+	ParamBuffer Params = {};
+	ParamBegin(&Params, 2, 1);
+	ParamInt(&Params, WorldID);
+	ParamInt(&Params, NumCharacters);
+	PGresult *Result = PQexecPrepared(Database->Handle, Stmt, Params.NumParams,
+							Params.Values, Params.Lengths, Params.Formats, 1);
+	AutoResultClear ResultGuard(Result);
+	if(PQresultStatus(Result) != PGRES_COMMAND_OK){
+		LOG_ERR("Failed to execute query: %s", PQerrorMessage(Database->Handle));
+		return false;
+	}
+
+	*NewRecord = (ResultAffectedRows(Result) > 0);
+	return true;
 }
 
 #endif //DATABASE_POSTGRESQL

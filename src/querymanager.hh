@@ -942,7 +942,6 @@ public:
 // NOTE(fusion): Database Management
 void DatabaseClose(TDatabase *Database);
 TDatabase *DatabaseOpen(void);
-int DatabaseChanges(TDatabase *Database);
 bool DatabaseCheckpoint(TDatabase *Database);
 int DatabaseMaxConcurrency(void);
 
