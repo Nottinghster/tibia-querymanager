@@ -58,7 +58,10 @@ static bool DoResolveHostName(const char *HostName, int *OutAddr){
 }
 
 bool ResolveHostName(const char *HostName, int *OutAddr){
-	ASSERT(HostName != NULL && !StringEmpty(HostName));
+	if(HostName == NULL || StringEmpty(HostName)){
+		return false;
+	}
+
 	THostCacheEntry *Entry = NULL;
 	int LeastRecentlyUsedIndex = 0;
 	int LeastRecentlyUsedTime = g_CachedHostNames[0].ResolveTime;

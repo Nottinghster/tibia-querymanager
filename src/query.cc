@@ -587,8 +587,18 @@ static void LoginAccountTx(TDatabase *Database, TQuery *Query,
 	for(int i = 0; i < NumCharacters; i += 1){
 		Response->WriteString(Characters[i].Name);
 		Response->WriteString(Characters[i].WorldName);
-		Response->Write32BE((uint32)Characters[i].WorldAddress);
-		Response->Write16((uint16)Characters[i].WorldPort);
+
+		int WorldAddress;
+		if(ResolveHostName(Characters[i].WorldHost, &WorldAddress)){
+			Response->Write32BE(WorldAddress);
+			Response->Write16(Characters[i].WorldPort);
+		}else{
+			LOG_ERR("Failed to resolve world \"%s\" host name \"%s\" for character \"%s\"",
+					Characters[i].WorldName, Characters[i].WorldHost, Characters[i].Name);
+
+			Response->Write32BE(0);
+			Response->Write16(0);
+		}
 	}
 	Response->Write16((uint16)(Account.PremiumDays + Account.PendingPremiumDays));
 	QueryFinishResponse(Query);

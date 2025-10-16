@@ -780,20 +780,10 @@ bool GetCharacterEndpoints(TDatabase *Database, int AccountID, DynamicArray<TCha
 	}
 
 	while(sqlite3_step(Stmt) == SQLITE_ROW){
-		int WorldAddress;
-		const char *CharacterName = (const char*)sqlite3_column_text(Stmt, 0);
-		const char *WorldName = (const char*)sqlite3_column_text(Stmt, 1);
-		const char *HostName = (const char*)sqlite3_column_text(Stmt, 2);
-		if(HostName == NULL || !ResolveHostName(HostName, &WorldAddress)){
-			LOG_ERR("Failed to resolve world \"%s\" host name \"%s\" for character \"%s\"",
-					WorldName, HostName, CharacterName);
-			continue;
-		}
-
 		TCharacterEndpoint Character = {};
-		StringBufCopy(Character.Name, CharacterName);
-		StringBufCopy(Character.WorldName, WorldName);
-		Character.WorldAddress = WorldAddress;
+		StringBufCopy(Character.Name, (const char*)sqlite3_column_text(Stmt, 0));
+		StringBufCopy(Character.WorldName, (const char*)sqlite3_column_text(Stmt, 1));
+		StringBufCopy(Character.WorldHost, (const char*)sqlite3_column_text(Stmt, 2));
 		Character.WorldPort = sqlite3_column_int(Stmt, 3);
 		Characters->Push(Character);
 	}

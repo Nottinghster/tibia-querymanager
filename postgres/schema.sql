@@ -6,11 +6,13 @@ BEGIN;
 
 -- IMPORTANT(fusion): PosgreSQL doesn't have a defined `NOCASE` collation like
 -- SQLite and doesn't use a default case-insensitive collation like MySQL. The
--- simplest alternative is to create a custom collation.
---  This is only supported with PostgreSQL 10+ but it should safe to assume that
--- it's widely supported, given that it's almost 10 years old and well past its
--- end-of-life.
---  For more information see:
+-- simplest alternative is to create a custom non-deterministic ICU collation.
+--  ICU as a collation provider is supported with PostgreSQL 10+, while
+-- non-deterministic collations are supported with PostgreSQL 12+. Either way,
+-- it should be safe to assume that it's widely supported, given that version
+-- 12 is roughly 6 years old and well past its end-of-life.
+--  There are also drawbacks from using these types of collations but I won't
+-- go into details. For more information see:
 --   https://www.postgresql.org/docs/current/collation.html
 CREATE COLLATION NOCASE (
     provider = icu,
@@ -18,10 +20,10 @@ CREATE COLLATION NOCASE (
     locale = 'und-u-ks-level2'
 );
 
--- IMPORTANT(fusion): Since we're already assuming PostgreSQL 10+ for collations,
+-- IMPORTANT(fusion): Since we're already assuming PostgreSQL 12+ for collations,
 -- it's probably a good idea to use IDENTITY columns instead of SERIAL. They're
--- also supported with PostgreSQL 10+ and are supposed so fix some shortcommings
--- of SERIAL.
+-- supported with PostgreSQL 10+ and are supposed so fix some shortcommings of
+-- SERIAL.
 
 -- TODO(fusion): SQLite tables didn't use foreign key constraints so I'm also not
 -- using them here. It might be a good idea for consistency, but it's not a hard

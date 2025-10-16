@@ -10,7 +10,7 @@ INSERT INTO Accounts (AccountID, Email, Auth)
 -- PostgreSQL handles unique auto increment columns makes so manually inserted
 -- values end up colliding with generated values at some point.
 --  On a real scenario, we'd never have manually assigned ids unless we're
--- restoring some database dump, in which case it would already have saved
+-- restoring some database dump, in which case it would also have saved
 -- sequences.
 WITH
     WorldIns AS (

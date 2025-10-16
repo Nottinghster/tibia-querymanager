@@ -1634,23 +1634,12 @@ bool GetCharacterEndpoints(TDatabase *Database, int AccountID, DynamicArray<TCha
 
 	int NumRows = PQntuples(Result);
 	for(int Row = 0; Row < NumRows; Row += 1){
-		int WorldAddress;
-		const char *CharacterName = GetResultText(Result, Row, 0);
-		const char *WorldName = GetResultText(Result, Row, 1);
-		const char *HostName = GetResultText(Result, Row, 2);
-		if(HostName == NULL || !ResolveHostName(HostName, &WorldAddress)){
-			LOG_ERR("Failed to resolve world \"%s\" host name \"%s\" for character \"%s\"",
-					WorldName, HostName, CharacterName);
-			continue;
-		}
-
 		TCharacterEndpoint Character = {};
-		StringBufCopy(Character.Name, CharacterName);
-		StringBufCopy(Character.WorldName, WorldName);
-		Character.WorldAddress = WorldAddress;
+		StringBufCopy(Character.Name, GetResultText(Result, Row, 0));
+		StringBufCopy(Character.WorldName, GetResultText(Result, Row, 1));
+		StringBufCopy(Character.WorldHost, GetResultText(Result, Row, 2));
 		Character.WorldPort = GetResultInt(Result, Row, 3);
 		Characters->Push(Character);
-
 	}
 
 	return true;

@@ -801,7 +801,7 @@ struct TAccountBuddy{
 struct TCharacterEndpoint{
 	char Name[30];
 	char WorldName[30];
-	int WorldAddress;
+	char WorldHost[100];
 	int WorldPort;
 };
 
