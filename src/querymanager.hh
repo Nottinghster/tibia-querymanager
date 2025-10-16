@@ -642,7 +642,7 @@ public:
 
 // String Buffer
 //==============================================================================
-template<int N = KB(2)>
+template<int N>
 struct StringBuffer{
 private:
 	STATIC_ASSERT(N > 0);

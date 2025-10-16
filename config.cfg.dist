@@ -3,8 +3,8 @@ MaxCachedHostNames              = 100
 HostNameExpireTime              = 30m
 
 # SQLite Config
-#SQLite.File                     = "tibia.db"
-#SQLite.MaxCachedStatements      = 100
+SQLite.File                     = "tibia.db"
+SQLite.MaxCachedStatements      = 100
 
 # PostgreSQL Config
 # NOTE(fusion): These options are passed directly to `PQconnectdbParams`.
@@ -15,8 +15,7 @@ PostgreSQL.Host                 = "localhost"
 PostgreSQL.Port                 = "5432"
 PostgreSQL.DBName               = "tibia"
 PostgreSQL.User                 = "tibia"
-#PostgreSQL.Password             = ""
-PostgreSQL.Password             = "password"
+PostgreSQL.Password             = ""
 PostgreSQL.ConnectTimeout       = ""
 PostgreSQL.ClientEncoding       = "UTF8"
 PostgreSQL.ApplicationName      = "QueryManager"
@@ -25,13 +24,13 @@ PostgreSQL.SSLRootCert          = ""
 PostgreSQL.MaxCachedStatements  = 100
 
 # MySQL/MariaDB Config
-#MySQL.Host                      = "localhost"
-#MySQL.Port                      = "3306"
-#MySQL.DBName                    = "tibia"
-#MySQL.User                      = "tibia"
-#MySQL.Password                  = ""
-#MySQL.UnixSocket                = ""
-#MySQL.MaxCachedStatements       = 100
+MySQL.Host                      = "localhost"
+MySQL.Port                      = "3306"
+MySQL.DBName                    = "tibia"
+MySQL.User                      = "tibia"
+MySQL.Password                  = ""
+MySQL.UnixSocket                = ""
+MySQL.MaxCachedStatements       = 100
 
 # Connection Config
 QueryManagerPort                = 7173

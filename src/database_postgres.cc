@@ -145,7 +145,7 @@ static void ParamBool(ParamBuffer *Params, bool Value){
 	if(Params->PreferredFormat == 1){ // BINARY FORMAT
 		uint8 Data = (Value ? 0x01 : 0x00);
 		InsertBinaryParam(Params, &Data, 1);
-	}else{                            // TEXT FORMAT
+	}else{
 		InsertTextParam(Params, (Value ? "TRUE" : "FALSE"));
 	}
 }
