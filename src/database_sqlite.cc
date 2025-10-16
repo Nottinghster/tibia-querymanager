@@ -1128,7 +1128,7 @@ bool IncrementIsOnline(TDatabase *Database, int WorldID, int CharacterID){
 		return false;
 	}
 
-	return sqlite3_changes(Database->Handle) > 0;
+	return true;
 }
 
 bool DecrementIsOnline(TDatabase *Database, int WorldID, int CharacterID){
@@ -1156,7 +1156,7 @@ bool DecrementIsOnline(TDatabase *Database, int WorldID, int CharacterID){
 		return false;
 	}
 
-	return sqlite3_changes(Database->Handle) > 0;
+	return true;
 }
 
 bool ClearIsOnline(TDatabase *Database, int WorldID, int *NumAffectedCharacters){
@@ -1218,7 +1218,7 @@ bool LogoutCharacter(TDatabase *Database, int WorldID, int CharacterID, int Leve
 		return false;
 	}
 
-	return sqlite3_changes(Database->Handle) > 0;
+	return true;
 }
 
 bool GetCharacterIndexEntries(TDatabase *Database, int WorldID, int MinimumCharacterID,
@@ -1292,7 +1292,7 @@ bool InsertCharacterDeath(TDatabase *Database, int WorldID, int CharacterID, int
 		return false;
 	}
 
-	return sqlite3_changes(Database->Handle) > 0;
+	return true;
 }
 
 bool InsertBuddy(TDatabase *Database, int WorldID, int AccountID, int BuddyID){
@@ -1697,7 +1697,7 @@ bool UpdateHouseOwner(TDatabase *Database, int WorldID, int HouseID, int OwnerID
 		return false;
 	}
 
-	return sqlite3_changes(Database->Handle) > 0;
+	return true;
 }
 
 bool DeleteHouseOwner(TDatabase *Database, int WorldID, int HouseID){
@@ -1722,7 +1722,7 @@ bool DeleteHouseOwner(TDatabase *Database, int WorldID, int HouseID){
 		return false;
 	}
 
-	return sqlite3_changes(Database->Handle) > 0;
+	return true;
 }
 
 bool GetHouseOwners(TDatabase *Database, int WorldID, DynamicArray<THouseOwner> *Owners){
@@ -1907,7 +1907,7 @@ bool ExcludeFromAuctions(TDatabase *Database, int WorldID, int CharacterID, int 
 		return false;
 	}
 
-	return sqlite3_changes(Database->Handle) > 0;
+	return true;
 }
 
 // Banishment Tables
@@ -2497,7 +2497,7 @@ bool CheckOnlineRecord(TDatabase *Database, int WorldID, int NumCharacters, bool
 		return false;
 	}
 
-	*NewRecord = sqlite3_changes(Database->Handle) > 0;
+	*NewRecord = (sqlite3_changes(Database->Handle) > 0);
 	return true;
 }
 
