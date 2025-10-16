@@ -95,13 +95,13 @@ struct TConfig{
 	int  MaxCachedHostNames;
 	int  HostNameExpireTime;
 
-	// Database Config
-#if DATABASE_SQLITE
+	// SQLite Config
 	struct{
 		char File[100];
 		int  MaxCachedStatements;
 	} SQLite;
-#elif DATABASE_POSTGRESQL
+
+	// PostgreSQL Config
 	struct{
 		// NOTE(fusion): Most of these are stored as strings because that is the
 		// format libpq expects for connection parameters.
@@ -117,7 +117,8 @@ struct TConfig{
 		char SSLRootCert[100];
 		int  MaxCachedStatements;
 	} PostgreSQL;
-#elif DATABASE_MYSQL
+
+	// MySQL/MariaDB Config
 	struct{
 		char Host[100];
 		char Port[30];
@@ -127,7 +128,6 @@ struct TConfig{
 		char UnixSocket[100];
 		int  MaxCachedStatements;
 	} MySQL;
-#endif
 
 	// Connection Config
 	int  QueryManagerPort;

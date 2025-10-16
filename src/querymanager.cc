@@ -493,12 +493,10 @@ bool ReadConfig(const char *FileName, TConfig *Config){
 			ParseInteger(&Config->MaxCachedHostNames, Val);
 		}else if(StringEqCI(Key, "HostNameExpireTime")){
 			ParseDuration(&Config->HostNameExpireTime, Val);
-#if DATABASE_SQLITE
 		}else if(StringEqCI(Key, "SQLite.File")){
 			ParseStringBuf(Config->SQLite.File, Val);
 		}else if(StringEqCI(Key, "SQLite.MaxCachedStatements")){
 			ParseInteger(&Config->SQLite.MaxCachedStatements, Val);
-#elif DATABASE_POSTGRESQL
 		}else if(StringEqCI(Key, "PostgreSQL.Host")){
 			ParseStringBuf(Config->PostgreSQL.Host, Val);
 		}else if(StringEqCI(Key, "PostgreSQL.Port")){
@@ -521,7 +519,6 @@ bool ReadConfig(const char *FileName, TConfig *Config){
 			ParseStringBuf(Config->PostgreSQL.SSLRootCert, Val);
 		}else if(StringEqCI(Key, "PostgreSQL.MaxCachedStatements")){
 			ParseInteger(&Config->PostgreSQL.MaxCachedStatements, Val);
-#elif DATABASE_MYSQL
 		}else if(StringEqCI(Key, "MySQL.Host")){
 			ParseStringBuf(Config->MySQL.Host, Val);
 		}else if(StringEqCI(Key, "MySQL.Port")){
@@ -536,7 +533,6 @@ bool ReadConfig(const char *FileName, TConfig *Config){
 			ParseStringBuf(Config->MySQL.UnixSocket, Val);
 		}else if(StringEqCI(Key, "MySQL.MaxCachedStatements")){
 			ParseInteger(&Config->MySQL.MaxCachedStatements, Val);
-#endif
 		}else if(StringEqCI(Key, "QueryManagerPort")){
 			ParseInteger(&Config->QueryManagerPort, Val);
 		}else if(StringEqCI(Key, "QueryManagerPassword")){
@@ -594,11 +590,11 @@ int main(int argc, const char **argv){
 	g_Config.MaxCachedHostNames = 100;
 	g_Config.HostNameExpireTime = 60 * 30; // seconds
 
-	// Database Config
-#if DATABASE_SQLITE
+	// SQLite Config
 	StringBufCopy(g_Config.SQLite.File, "tibia.db");
 	g_Config.SQLite.MaxCachedStatements = 100;
-#elif DATABASE_POSTGRESQL
+
+	// PostgreSQL Config
 	StringBufCopy(g_Config.PostgreSQL.Host,            "localhost");
 	StringBufCopy(g_Config.PostgreSQL.Port,            "5432");
 	StringBufCopy(g_Config.PostgreSQL.DBName,          "tibia");
@@ -610,7 +606,8 @@ int main(int argc, const char **argv){
 	StringBufCopy(g_Config.PostgreSQL.SSLMode,         "");
 	StringBufCopy(g_Config.PostgreSQL.SSLRootCert,     "");
 	g_Config.PostgreSQL.MaxCachedStatements = 100;
-#elif DATABASE_MYSQL
+
+	// MySQL/MariaDB Config
 	StringBufCopy(g_Config.MySQL.Host,       "localhost");
 	StringBufCopy(g_Config.MySQL.Port,       "3306");
 	StringBufCopy(g_Config.MySQL.DBName,     "tibia");
@@ -618,7 +615,6 @@ int main(int argc, const char **argv){
 	StringBufCopy(g_Config.MySQL.Password,   "");
 	StringBufCopy(g_Config.MySQL.UnixSocket, "");
 	g_Config.MySQL.MaxCachedStatements = 100;
-#endif
 
 	// Connection Config
 	g_Config.QueryManagerPort = 7174;
