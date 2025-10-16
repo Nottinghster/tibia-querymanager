@@ -1554,14 +1554,7 @@ bool GetAccountOnlineCharacters(TDatabase *Database, int AccountID, int *OnlineC
 		return false;
 	}
 
-	// NOTE(fusion): This is intended. A `SELECT COUNT(*)` query should always
-	// return something.
-	if(PQntuples(Result) == 0){
-		LOG_ERR("Query returned no rows");
-		return false;
-	}
-
-	*OnlineCharacters = GetResultInt(Result, 0, 0);
+	*OnlineCharacters = (PQntuples(Result) > 0 ? GetResultInt(Result, 0, 0) : 0);
 	return true;
 }
 
@@ -2319,12 +2312,7 @@ bool GetAccountFailedLoginAttempts(TDatabase *Database, int AccountID, int TimeW
 		return false;
 	}
 
-	if(PQntuples(Result) == 0){
-		LOG_ERR("Query returned no rows");
-		return false;
-	}
-
-	*FailedAttempts = GetResultInt(Result, 0, 0);
+	*FailedAttempts = (PQntuples(Result) > 0 ? GetResultInt(Result, 0, 0) : 0);
 	return true;
 }
 
@@ -2352,12 +2340,7 @@ bool GetIPAddressFailedLoginAttempts(TDatabase *Database, int IPAddress, int Tim
 		return false;
 	}
 
-	if(PQntuples(Result) == 0){
-		LOG_ERR("Query returned no rows");
-		return false;
-	}
-
-	*FailedAttempts = GetResultInt(Result, 0, 0);
+	*FailedAttempts = (PQntuples(Result) > 0 ? GetResultInt(Result, 0, 0) : 0);
 	return true;
 }
 
@@ -2971,12 +2954,7 @@ bool GetNotationCount(TDatabase *Database, int CharacterID, int *Notations){
 		return false;
 	}
 
-	if(PQntuples(Result) == 0){
-		LOG_ERR("Query returned no rows");
-		return false;
-	}
-
-	*Notations = GetResultInt(Result, 0, 0);
+	*Notations = (PQntuples(Result) > 0 ? GetResultInt(Result, 0, 0) : 0);
 	return true;
 }
 
