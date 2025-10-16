@@ -112,6 +112,6 @@ INSERT INTO CharacterRights(CharacterID, Name)
             ('CLEANUP_FIELDS'),
             ('NO_STATISTICS')
         ) AS R (RightName)
-    WHERE C.Name = 'Gamemaster';
+    WHERE C.Name ILIKE 'Gamemaster%' COLLATE "default";
 
 COMMIT;

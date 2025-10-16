@@ -1828,7 +1828,7 @@ bool GetCharacterProfile(TDatabase *Database, const char *CharacterName, TCharac
 			" LEFT JOIN CharacterRights AS R"
 				" ON R.CharacterID = C.CharacterID"
 				" AND R.Name = 'NO_STATISTICS'"
-			" WHERE C.Name = $1::TEXT AND R.Right IS NULL");
+			" WHERE C.Name = $1::TEXT AND R.Name IS NULL");
 	if(Stmt == NULL){
 		LOG_ERR("Failed to prepare query");
 		return false;
@@ -3212,8 +3212,9 @@ bool MergeKillStatistics(TDatabase *Database, int WorldID, int NumStats, TKillSt
 	const char *Stmt = PrepareQuery(Database,
 			"INSERT INTO KillStatistics (WorldID, RaceName, TimesKilled, PlayersKilled)"
 			" VALUES ($1::INTEGER, $2::TEXT, $3::INTEGER, $4::INTEGER)"
-			" ON CONFLICT DO UPDATE SET TimesKilled = TimesKilled + EXCLUDED.TimesKilled,"
-									" PlayersKilled = PlayersKilled + EXCLUDED.PlayersKilled");
+			" ON CONFLICT (WorldID, RaceName)"
+				" DO UPDATE SET TimesKilled = KillStatistics.TimesKilled + EXCLUDED.TimesKilled,"
+						" PlayersKilled = KillStatistics.PlayersKilled + EXCLUDED.PlayersKilled");
 	if(Stmt == NULL){
 		LOG_ERR("Failed to prepare query");
 		return false;
