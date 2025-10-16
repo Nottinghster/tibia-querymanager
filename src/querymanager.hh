@@ -148,7 +148,7 @@ void LogAddVerbose(const char *Prefix, const char *Function,
 struct tm GetLocalTime(time_t t);
 struct tm GetGMTime(time_t t);
 int64 GetClockMonotonicMS(void);
-int GetMonotonicUptimeMS(void);
+int GetMonotonicUptime(void);
 void SleepMS(int DurationMS);
 void CryptoRandom(uint8 *Buffer, int Count);
 int RoundSecondsToDays(int Seconds);

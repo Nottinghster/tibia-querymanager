@@ -101,8 +101,8 @@ int64 GetClockMonotonicMS(void){
 #endif
 }
 
-int GetMonotonicUptimeMS(void){
-	return (int)(GetClockMonotonicMS() - g_StartTimeMS);
+int GetMonotonicUptime(void){
+	return (int)((GetClockMonotonicMS() - g_StartTimeMS) / 1000);
 }
 
 void SleepMS(int DurationMS){
@@ -342,11 +342,11 @@ bool ParseDuration(int *Dest, const char *String){
 	}
 
 	if(Suffix[0] == 'S' || Suffix[0] == 's'){
-		*Dest *= (1000);
+		*Dest *= (1);
 	}else if(Suffix[0] == 'M' || Suffix[0] == 'm'){
-		*Dest *= (60 * 1000);
+		*Dest *= (60);
 	}else if(Suffix[0] == 'H' || Suffix[0] == 'h'){
-		*Dest *= (60 * 60 * 1000);
+		*Dest *= (60 * 60);
 	}
 
 	return true;
@@ -592,7 +592,7 @@ int main(int argc, const char **argv){
 
 	// HostCache Config
 	g_Config.MaxCachedHostNames = 100;
-	g_Config.HostNameExpireTime = 30 * 60 * 1000; // milliseconds
+	g_Config.HostNameExpireTime = 60 * 30; // seconds
 
 	// Database Config
 #if DATABASE_SQLITE
@@ -627,7 +627,7 @@ int main(int argc, const char **argv){
 	g_Config.QueryBufferSize = (int)MB(1);
 	g_Config.QueryMaxAttempts = 3;
 	g_Config.MaxConnections = 25;
-	g_Config.MaxConnectionIdleTime = 60 * 1000; // milliseconds
+	g_Config.MaxConnectionIdleTime = 60 * 5; // seconds
 
 	LOG("Tibia Query Manager v0.2 (%s)", DATABASE_SYSTEM_NAME);
 	if(!ReadConfig("config.cfg", &g_Config)){
@@ -636,7 +636,7 @@ int main(int argc, const char **argv){
 
 	// NOTE(fusion): Print config values for debugging purposes.
 	LOG("Max cached host names:            %d",     g_Config.MaxCachedHostNames);
-	LOG("Host name expire time:            %dms",   g_Config.HostNameExpireTime);
+	LOG("Host name expire time:            %ds",    g_Config.HostNameExpireTime);
 #if DATABASE_SQLITE
 	LOG("SQLite file:                      \"%s\"", g_Config.SQLite.File);
 	LOG("SQLite max cached statements:     %d",     g_Config.SQLite.MaxCachedStatements);
@@ -664,7 +664,7 @@ int main(int argc, const char **argv){
 	LOG("Query buffer size:                %dB",    g_Config.QueryBufferSize);
 	LOG("Query max attempts:               %d",     g_Config.QueryMaxAttempts);
 	LOG("Max connections:                  %d",     g_Config.MaxConnections);
-	LOG("Max connection idle time:         %dms",   g_Config.MaxConnectionIdleTime);
+	LOG("Max connection idle time:         %ds",    g_Config.MaxConnectionIdleTime);
 
 	if(!CheckSHA256()){
 		return EXIT_FAILURE;

@@ -141,7 +141,7 @@ TConnection *AssignConnection(int Socket, uint32 Addr, uint16 Port){
 		Connection = &g_Connections[ConnectionIndex];
 		Connection->State = CONNECTION_READING;
 		Connection->Socket = Socket;
-		Connection->LastActive = GetMonotonicUptimeMS();
+		Connection->LastActive = GetMonotonicUptime();
 		snprintf(Connection->RemoteAddress,
 				sizeof(Connection->RemoteAddress),
 				"%d.%d.%d.%d:%d",
@@ -215,7 +215,7 @@ void CheckConnectionInput(TConnection *Connection, int Events){
 		if(Connection->RWPosition >= ReadSize){
 			if(Connection->RWSize != 0){
 				Connection->State = CONNECTION_REQUEST;
-				Connection->LastActive = GetMonotonicUptimeMS();
+				Connection->LastActive = GetMonotonicUptime();
 				Connection->Query->Request = TReadBuffer(Buffer, Connection->RWSize);
 				break;
 			}else if(Connection->RWPosition == 2){
@@ -510,8 +510,12 @@ void CheckConnection(TConnection *Connection, int Events){
 		CloseConnection(Connection);
 	}
 
+	// NOTE(fusion): Idle connection could linger for more than expected because
+	// the polling thread now blocks on `poll`. It shouldn't be a problem tho, as
+	// it could only happen on periods of absolutely NO traffic, so there is ZERO
+	// load on the query manager outside of used memory (which is already limited).
 	if(g_Config.MaxConnectionIdleTime > 0){
-		int IdleTime = (GetMonotonicUptimeMS() - Connection->LastActive);
+		int IdleTime = (GetMonotonicUptime() - Connection->LastActive);
 		if(IdleTime >= g_Config.MaxConnectionIdleTime){
 			LOG_WARN("Dropping connection %s due to inactivity",
 					Connection->RemoteAddress);

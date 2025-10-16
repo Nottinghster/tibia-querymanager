@@ -1051,7 +1051,7 @@ const char *PrepareQuery(TDatabase *Database, const char *Text){
 		if(Entry->Text != NULL && Entry->Hash == Hash){
 			if(StringEq(Entry->Text, Text)){
 				Stmt = Entry;
-				Entry->LastUsed = GetMonotonicUptimeMS();
+				Entry->LastUsed = GetMonotonicUptime();
 				break;
 			}
 		}
@@ -1085,7 +1085,7 @@ const char *PrepareQuery(TDatabase *Database, const char *Text){
 		}
 
 
-		Stmt->LastUsed = GetMonotonicUptimeMS();
+		Stmt->LastUsed = GetMonotonicUptime();
 		Stmt->Hash = Hash;
 		Stmt->Text = strdup(Text);
 		ASSERT(Stmt->Text != NULL);

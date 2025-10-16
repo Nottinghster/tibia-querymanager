@@ -62,7 +62,7 @@ bool ResolveHostName(const char *HostName, int *OutAddr){
 	THostCacheEntry *Entry = NULL;
 	int LeastRecentlyUsedIndex = 0;
 	int LeastRecentlyUsedTime = g_CachedHostNames[0].ResolveTime;
-	int TimeNow = GetMonotonicUptimeMS();
+	int TimeNow = GetMonotonicUptime();
 	for(int i = 0; i < g_Config.MaxCachedHostNames; i += 1){
 		THostCacheEntry *Current = &g_CachedHostNames[i];
 
