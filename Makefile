@@ -4,7 +4,7 @@ OUTPUTEXE = querymanager
 
 CC = gcc
 CXX = g++
-CFLAGS = -m64 -fno-strict-aliasing -pedantic -Wno-unused-parameter -Wall -Wextra -pthread
+CFLAGS = -m64 -fno-strict-aliasing -pedantic -Wall -Wextra -pthread
 CXXFLAGS = $(CFLAGS) --std=c++11
 LFLAGS = -Wl,-t
 

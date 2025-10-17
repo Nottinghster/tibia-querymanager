@@ -136,6 +136,16 @@ int RoundSecondsToDays(int Seconds){
 	return (Seconds + 86399) / 86400;
 }
 
+uint32 HashString(const char *String){
+	// FNV1a 32-bits
+	uint32 Hash = 0x811C9DC5U;
+	for(int i = 0; String[i] != 0; i += 1){
+		Hash ^= (uint32)String[i];
+		Hash *= 0x01000193U;
+	}
+	return Hash;
+}
+
 bool StringEmpty(const char *String){
 	return String[0] == 0;
 }
@@ -231,14 +241,178 @@ bool StringFormat(char *Dest, int DestCapacity, const char *Format, ...){
 	return Written >= 0 && Written < DestCapacity;
 }
 
-uint32 HashString(const char *String){
-	// FNV1a 32-bits
-	uint32 Hash = 0x811C9DC5U;
-	for(int i = 0; String[i] != 0; i += 1){
-		Hash ^= (uint32)String[i];
-		Hash *= 0x01000193U;
+int UTF8SequenceSize(uint8 LeadingByte){
+	if((LeadingByte & 0x80) == 0){
+		return 1;
+	}else if((LeadingByte & 0xE0) == 0xC0){
+		return 2;
+	}else if((LeadingByte & 0xF0) == 0xE0){
+		return 3;
+	}else if((LeadingByte & 0xF8) == 0xF0){
+		return 4;
+	}else{
+		return 0;
 	}
-	return Hash;
+}
+
+bool UTF8IsTrailingByte(uint8 Byte){
+	return (Byte & 0xC0) == 0x80;
+}
+
+int UTF8EncodedSize(int Codepoint){
+	if(Codepoint < 0){
+		return 0;
+	}else if(Codepoint <= 0x7F){
+		return 1;
+	}else if(Codepoint <= 0x07FF){
+		return 2;
+	}else if(Codepoint <= 0xFFFF){
+		return 3;
+	}else if(Codepoint <= 0x10FFFF){
+		return 4;
+	}else{
+		return 0;
+	}
+}
+
+int UTF8FindNextLeadingByte(const char *Src, int SrcLength){
+	int Offset = 0;
+	while(Offset < SrcLength){
+		// NOTE(fusion): Allow the first byte to be a leading byte, in case we
+		// just want to advance from one leading byte to another.
+		if(Offset > 0 && !UTF8IsTrailingByte(Src[Offset])){
+			break;
+		}
+		Offset += 1;
+	}
+	return Offset;
+}
+
+int UTF8DecodeOne(const uint8 *Src, int SrcLength, int *OutCodepoint){
+	if(SrcLength <= 0){
+		return 0;
+	}
+
+	int Size = UTF8SequenceSize(Src[0]);
+	if(Size <= 0 || Size > SrcLength){
+		return 0;
+	}
+
+	for(int i = 1; i < Size; i += 1){
+		if(!UTF8IsTrailingByte(Src[i])){
+			return 0;
+		}
+	}
+
+	int Codepoint = 0;
+	switch(Size){
+		case 1:{
+			Codepoint = (int)Src[0];
+			break;
+		}
+
+		case 2:{
+			Codepoint = ((int)(Src[0] & 0x1F) <<  6)
+					|   ((int)(Src[1] & 0x3F) <<  0);
+			break;
+		}
+
+		case 3:{
+			Codepoint = ((int)(Src[0] & 0x0F) << 12)
+					|   ((int)(Src[1] & 0x3F) <<  6)
+					|   ((int)(Src[2] & 0x3F) <<  0);
+			break;
+		}
+
+		case 4:{
+			Codepoint = ((int)(Src[0] & 0x07) << 18)
+					|   ((int)(Src[1] & 0x3F) << 12)
+					|   ((int)(Src[2] & 0x3F) <<  6)
+					|   ((int)(Src[3] & 0x3F) <<  0);
+			break;
+		}
+	}
+
+	if(OutCodepoint){
+		*OutCodepoint = Codepoint;
+	}
+
+	return Size;
+}
+
+int UTF8EncodeOne(uint8 *Dest, int DestCapacity, int Codepoint){
+	int Size = UTF8EncodedSize(Codepoint);
+	if(Size > 0 && Size <= DestCapacity){
+		switch(Size){
+			case 1:{
+				Dest[0] = (uint8)Codepoint;
+				break;
+			}
+
+			case 2:{
+				Dest[0] = (uint8)(0xC0 | (0x1F & (Codepoint >>  6)));
+				Dest[1] = (uint8)(0x80 | (0x3F & (Codepoint >>  0)));
+				break;
+			}
+
+			case 3:{
+				Dest[0] = (uint8)(0xE0 | (0x0F & (Codepoint >> 12)));
+				Dest[1] = (uint8)(0x80 | (0x3F & (Codepoint >>  6)));
+				Dest[2] = (uint8)(0x80 | (0x3F & (Codepoint >>  0)));
+				break;
+			}
+
+			case 4:{
+				Dest[0] = (uint8)(0xF0 | (0x07 & (Codepoint >> 18)));
+				Dest[1] = (uint8)(0x80 | (0x3F & (Codepoint >> 12)));
+				Dest[2] = (uint8)(0x80 | (0x3F & (Codepoint >>  6)));
+				Dest[3] = (uint8)(0x80 | (0x3F & (Codepoint >>  0)));
+				break;
+			}
+		}
+	}
+
+	return Size;
+}
+
+// IMPORTANT(fusion): This function WON'T handle null-termination. It'll rather
+// convert any characters, INCLUDING the null-terminator, contained in the src
+// string. Invalid or NON-LATIN1 codepoints are translated into '?'.
+int UTF8ToLatin1(char *Dest, int DestCapacity, const char *Src, int SrcLength){
+	int ReadPos = 0;
+	int WritePos = 0;
+	while(ReadPos < SrcLength){
+		int Codepoint = -1;
+		int Size = UTF8DecodeOne((uint8*)(Src + ReadPos), (SrcLength - ReadPos), &Codepoint);
+		if(Size > 0){
+			ReadPos += Size;
+		}else{
+			ReadPos += UTF8FindNextLeadingByte((Src + ReadPos), (SrcLength - ReadPos));
+		}
+
+		if(WritePos < DestCapacity){
+			if(Codepoint >= 0 && Codepoint <= 0xFF){
+				Dest[WritePos] = (char)Codepoint;
+			}else{
+				Dest[WritePos] = '?';
+			}
+		}
+		WritePos += 1;
+	}
+
+	return WritePos;
+}
+
+// IMPORTANT(fusion): This function WON'T handle null-termination. It'll rather
+// convert any characters, INCLUDING the null-terminator, contained in the src
+// string. Note that LATIN1 characters translates directly into UNICODE codepoints.
+int Latin1ToUTF8(char *Dest, int DestCapacity, const char *Src, int SrcLength){
+	int WritePos = 0;
+	for(int ReadPos = 0; ReadPos < SrcLength; ReadPos += 1){
+		WritePos += UTF8EncodeOne((uint8*)(Dest + WritePos),
+				(DestCapacity - WritePos), (uint8)Src[ReadPos]);
+	}
+	return WritePos;
 }
 
 int HexDigit(int Ch){
@@ -509,8 +683,6 @@ bool ReadConfig(const char *FileName, TConfig *Config){
 			ParseStringBuf(Config->PostgreSQL.Password, Val);
 		}else if(StringEqCI(Key, "PostgreSQL.ConnectTimeout")){
 			ParseStringBuf(Config->PostgreSQL.ConnectTimeout, Val);
-		}else if(StringEqCI(Key, "PostgreSQL.ClientEncoding")){
-			ParseStringBuf(Config->PostgreSQL.ClientEncoding, Val);
 		}else if(StringEqCI(Key, "PostgreSQL.ApplicationName")){
 			ParseStringBuf(Config->PostgreSQL.ApplicationName, Val);
 		}else if(StringEqCI(Key, "PostgreSQL.SSLMode")){
@@ -601,7 +773,6 @@ int main(int argc, const char **argv){
 	StringBufCopy(g_Config.PostgreSQL.User,            "tibia");
 	StringBufCopy(g_Config.PostgreSQL.Password,        "");
 	StringBufCopy(g_Config.PostgreSQL.ConnectTimeout,  "");
-	StringBufCopy(g_Config.PostgreSQL.ClientEncoding,  "UTF8");
 	StringBufCopy(g_Config.PostgreSQL.ApplicationName, "QueryManager");
 	StringBufCopy(g_Config.PostgreSQL.SSLMode,         "");
 	StringBufCopy(g_Config.PostgreSQL.SSLRootCert,     "");
@@ -642,7 +813,6 @@ int main(int argc, const char **argv){
 	LOG("PostgreSQL dbname:                \"%s\"", g_Config.PostgreSQL.DBName);
 	LOG("PostgreSQL user:                  \"%s\"", g_Config.PostgreSQL.User);
 	LOG("PostgreSQL connect_timeout:       \"%s\"", g_Config.PostgreSQL.ConnectTimeout);
-	LOG("PostgreSQL client_encoding:       \"%s\"", g_Config.PostgreSQL.ClientEncoding);
 	LOG("PostgreSQL application_name:      \"%s\"", g_Config.PostgreSQL.ApplicationName);
 	LOG("PostgreSQL sslmode:               \"%s\"", g_Config.PostgreSQL.SSLMode);
 	LOG("PostgreSQL sslrootcert:           \"%s\"", g_Config.PostgreSQL.SSLRootCert);

@@ -454,6 +454,9 @@ static int GetResultByteA(PGresult *Result, int Row, int Col, uint8 *Buffer, int
 	return Size;
 }
 
+#if 0
+// NOTE(fusion): DO NOT REMOVE. It is currently not being used so it's switched
+// off to avoid compiler warnings.
 static int GetResultIPAddress(PGresult *Result, int Row, int Col){
 	int IPAddress = 0;
 	int Format = PQfformat(Result, Col);
@@ -524,8 +527,8 @@ static int GetResultIPAddress(PGresult *Result, int Row, int Col){
 		}
 	}
 	return IPAddress;
-
 }
+#endif
 
 static bool ParseTimestamp(int *Dest, const char *String){
 	ASSERT(Dest != NULL && String != NULL);
@@ -633,46 +636,46 @@ static int GetResultTimestamp(PGresult *Result, int Row, int Col){
 	return Timestamp;
 }
 
-static void SkipWhitespace(int *Cursor, const char *String){
-	while(isspace(String[*Cursor])){
-		*Cursor += 1;
+static void SkipWhitespace(int *Position, const char *String){
+	while(isspace(String[*Position])){
+		*Position += 1;
 	}
 }
 
-static bool SkipNextChar(int Ch, int *Cursor, const char *String){
+static bool SkipNextChar(int Ch, int *Position, const char *String){
 	ASSERT(Ch != 0);
-	if(String[*Cursor] != Ch){
+	if(String[*Position] != Ch){
 		return false;
 	}
 
-	*Cursor += 1;
+	*Position += 1;
 	return true;
 }
 
-static bool ReadNextNumber(int *Dest, int *Cursor, const char *String){
-	SkipWhitespace(Cursor, String);
+static bool ReadNextNumber(int *Dest, int *Position, const char *String){
+	SkipWhitespace(Position, String);
 
 	bool Negative = false;
-	if(!isdigit(String[*Cursor])){
-		if(String[*Cursor] != '+' && String[*Cursor] != '-'){
+	if(!isdigit(String[*Position])){
+		if(String[*Position] != '+' && String[*Position] != '-'){
 			return false;
 		}
 
-		if(!isdigit(String[*Cursor + 1])){
+		if(!isdigit(String[*Position + 1])){
 			return false;
 		}
 
-		if(String[*Cursor] == '-'){
+		if(String[*Position] == '-'){
 			Negative = true;
 		}
 
-		*Cursor += 1;
+		*Position += 1;
 	}
 
 	int Number = 0;
-	while(isdigit(String[*Cursor])){
-		Number = (Number * 10) + (String[*Cursor] - '0');
-		*Cursor += 1;
+	while(isdigit(String[*Position])){
+		Number = (Number * 10) + (String[*Position] - '0');
+		*Position += 1;
 	}
 
 	if(Negative){
@@ -683,21 +686,21 @@ static bool ReadNextNumber(int *Dest, int *Cursor, const char *String){
 	return true;
 }
 
-static bool ReadNextWord(char *Dest, int DestCapacity, int *Cursor, const char *String){
+static bool ReadNextWord(char *Dest, int DestCapacity, int *Position, const char *String){
 	ASSERT(DestCapacity > 0);
 
-	SkipWhitespace(Cursor, String);
-	if(!isalpha(String[*Cursor])){
+	SkipWhitespace(Position, String);
+	if(!isalpha(String[*Position])){
 		return false;
 	}
 
 	int WritePos = 0;
-	while(isalpha(String[*Cursor])){
+	while(isalpha(String[*Position])){
 		if(WritePos < DestCapacity){
-			Dest[WritePos] = String[*Cursor];
+			Dest[WritePos] = String[*Position];
 			WritePos += 1;
 		}
-		*Cursor += 1;
+		*Position += 1;
 	}
 
 	bool Result = (WritePos < DestCapacity);
@@ -716,25 +719,25 @@ static bool ParseInterval(int *Dest, const char *String){
 	// is stable enough or it would break other client libraries as well.
 	ASSERT(Dest != NULL && String != NULL);
 	int Interval = 0;
-	int Cursor = 0;
+	int Position = 0;
 	bool Negate = false;
 	while(true){
-		SkipWhitespace(&Cursor, String);
-		if(String[Cursor] == 0){
+		SkipWhitespace(&Position, String);
+		if(String[Position] == 0){
 			break;
 		}
 
 		int Number;
-		if(!ReadNextNumber(&Number, &Cursor, String)){
+		if(!ReadNextNumber(&Number, &Position, String)){
 			// "Expected number"
 			return false;
 		}
 
-		if(SkipNextChar(':', &Cursor, String)){
+		if(SkipNextChar(':', &Position, String)){
 			int Minutes, Seconds;
-			if(!ReadNextNumber(&Minutes, &Cursor, String)
-			|| !SkipNextChar(':', &Cursor, String)
-			|| !ReadNextNumber(&Seconds, &Cursor, String)){
+			if(!ReadNextNumber(&Minutes, &Position, String)
+			|| !SkipNextChar(':', &Position, String)
+			|| !ReadNextNumber(&Seconds, &Position, String)){
 				// "Expected HH:MM:SS.FFFFFF"
 				return false;
 			}
@@ -750,15 +753,15 @@ static bool ParseInterval(int *Dest, const char *String){
 			}
 
 			// NOTE(fusion): Parse microseconds but ignore it.
-			if(SkipNextChar('.', &Cursor, String)){
+			if(SkipNextChar('.', &Position, String)){
 				int Frac;
-				int PrevCursor = Cursor;
-				if(!ReadNextNumber(&Frac, &Cursor, String)){
+				int PrevPosition = Position;
+				if(!ReadNextNumber(&Frac, &Position, String)){
 					// "Expected fractional part"
 					return false;
 				}
 
-				int FracDigits = Cursor - PrevCursor;
+				int FracDigits = Position - PrevPosition;
 				if(FracDigits > 6){
 					// "Too many fractional digits"
 					return false;
@@ -768,7 +771,7 @@ static bool ParseInterval(int *Dest, const char *String){
 			Interval += (Number * 3600 + Minutes * 60 + Seconds);
 		}else{
 			char Unit[16];
-			if(!ReadNextWord(Unit, sizeof(Unit), &Cursor, String)){
+			if(!ReadNextWord(Unit, sizeof(Unit), &Position, String)){
 				// "Expected unit"
 				return false;
 			}
@@ -813,14 +816,14 @@ static bool ParseInterval(int *Dest, const char *String){
 		}
 
 		char Direction[8];
-		if(ReadNextWord(Direction, sizeof(Direction), &Cursor, String)){
+		if(ReadNextWord(Direction, sizeof(Direction), &Position, String)){
 			if(!StringEqCI(Direction, "ago")){
 				// "Invalid interval direction"
 				return false;
 			}
 
-			SkipWhitespace(&Cursor, String);
-			if(String[Cursor] != 0){
+			SkipWhitespace(&Position, String);
+			if(String[Position] != 0){
 				// "Interval direction is expected only at the very end"
 				return false;
 			}
@@ -1184,10 +1187,10 @@ TDatabase *DatabaseOpen(void){
 		"user",
 		"password",
 		"connect_timeout",
-		"client_encoding",
 		"application_name",
 		"sslmode",
 		"sslrootcert",
+		"client_encoding",
 		NULL, // sentinel
 	};
 
@@ -1198,10 +1201,10 @@ TDatabase *DatabaseOpen(void){
 		g_Config.PostgreSQL.User,
 		g_Config.PostgreSQL.Password,
 		g_Config.PostgreSQL.ConnectTimeout,
-		g_Config.PostgreSQL.ClientEncoding,
 		g_Config.PostgreSQL.ApplicationName,
 		g_Config.PostgreSQL.SSLMode,
 		g_Config.PostgreSQL.SSLRootCert,
+		"UTF8",
 		NULL, // sentinel
 	};
 

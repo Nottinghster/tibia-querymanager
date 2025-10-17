@@ -1346,6 +1346,7 @@ void ProcessCancelHouseTransfer(TDatabase *Database, TQuery *Query){
 	// are kept permanently and this query is used to delete/flag it, in case
 	// the it didn't complete. We might need to refine `FinishHouseTransfers`.
 	//int HouseID = Buffer->Read16();
+	(void)Database;
 	QueryOk(Query);
 }
 

@@ -111,7 +111,6 @@ struct TConfig{
 		char User[30];
 		char Password[30];
 		char ConnectTimeout[30];
-		char ClientEncoding[30];
 		char ApplicationName[30];
 		char SSLMode[30];
 		char SSLRootCert[100];
@@ -153,6 +152,7 @@ void SleepMS(int DurationMS);
 void CryptoRandom(uint8 *Buffer, int Count);
 int RoundSecondsToDays(int Seconds);
 
+uint32 HashString(const char *String);
 bool StringEmpty(const char *String);
 bool StringEq(const char *A, const char *B);
 bool StringEqCI(const char *A, const char *B);
@@ -162,7 +162,14 @@ bool StringCopyN(char *Dest, int DestCapacity, const char *Src, int SrcLength);
 bool StringCopy(char *Dest, int DestCapacity, const char *Src);
 void StringCopyEllipsis(char *Dest, int DestCapacity, const char *Src);
 bool StringFormat(char *Dest, int DestCapacity, const char *Format, ...) ATTR_PRINTF(3, 4);
-uint32 HashString(const char *String);
+int UTF8SequenceSize(uint8 LeadingByte);
+bool UTF8IsTrailingByte(uint8 Byte);
+int UTF8EncodedSize(int Codepoint);
+int UTF8FindNextLeadingByte(const char *Src, int SrcLength);
+int UTF8DecodeOne(const uint8 *Src, int SrcLength, int *OutCodepoint);
+int UTF8EncodeOne(uint8 *Dest, int DestCapacity, int Codepoint);
+int UTF8ToLatin1(char *Dest, int DestCapacity, const char *Src, int SrcLength);
+int Latin1ToUTF8(char *Dest, int DestCapacity, const char *Src, int SrcLength);
 
 int HexDigit(int Ch);
 int ParseHexString(uint8 *Dest, int DestCapacity, const char *String);
@@ -391,6 +398,7 @@ struct TReadBuffer{
 		return Result;
 	}
 
+#if CLIENT_ENCODING_UTF8
 	void ReadString(char *Dest, int DestCapacity){
 		int Length = (int)this->Read16();
 		if(Length == 0xFFFF){
@@ -398,16 +406,39 @@ struct TReadBuffer{
 		}
 
 		if(Dest != NULL && DestCapacity > 0){
-			if(Length < DestCapacity && this->CanRead(Length)){
+			int Written = 0;
+			if(this->CanRead(Length) && Length < DestCapacity){
 				memcpy(Dest, this->Buffer + this->Position, Length);
-				Dest[Length] = 0;
-			}else{
-				Dest[0] = 0;
+				Written = Length;
 			}
+			memset((Dest + Written), 0, (DestCapacity - Written));
 		}
 
 		this->Position += Length;
 	}
+#else
+	void ReadString(char *Dest, int DestCapacity){
+		int Length = (int)this->Read16();
+		if(Length == 0xFFFF){
+			Length = (int)this->Read32();
+		}
+
+		if(Dest != NULL && DestCapacity > 0){
+			int Written = 0;
+			if(this->CanRead(Length)){
+				const char *Src = (const char*)(this->Buffer + this->Position);
+				Written = Latin1ToUTF8(Dest, DestCapacity, Src, Length);
+				if(Written >= DestCapacity){
+					Written = 0;
+				}
+			}
+
+			memset((Dest + Written), 0, (DestCapacity - Written));
+		}
+
+		this->Position += Length;
+	}
+#endif
 };
 
 struct TWriteBuffer{
@@ -466,6 +497,7 @@ struct TWriteBuffer{
 		this->Position += 4;
 	}
 
+#if CLIENT_ENCODING_UTF8
 	void WriteString(const char *String){
 		int StringLength = 0;
 		if(String != NULL){
@@ -485,6 +517,31 @@ struct TWriteBuffer{
 
 		this->Position += StringLength;
 	}
+#else
+	void WriteString(const char *String){
+		int StringLength = 0;
+		int OutputLength = 0;
+		if(String != NULL){
+			StringLength = (int)strlen(String);
+			OutputLength = UTF8ToLatin1(NULL, 0, String, (int)strlen(String));
+		}
+
+		if(OutputLength < 0xFFFF){
+			this->Write16((uint16)OutputLength);
+		}else{
+			this->Write16(0xFFFF);
+			this->Write32((uint32)OutputLength);
+		}
+
+		if(OutputLength > 0 && this->CanWrite(OutputLength)){
+			int Written = UTF8ToLatin1((char*)(this->Buffer + this->Position),
+					(this->Size - this->Position), String, StringLength);
+			ASSERT(Written == OutputLength);
+		}
+
+		this->Position += OutputLength;
+	}
+#endif
 
 	void Rewrite16(int Position, uint16 Value){
 		if((Position + 2) <= this->Position && !this->Overflowed()){

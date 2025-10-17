@@ -855,7 +855,7 @@ bool CharacterNameExists(TDatabase *Database, const char *Name, bool *Exists){
 	}
 
 	*Exists = (ErrorCode == SQLITE_ROW);
-	return false;
+	return true;
 }
 
 bool CreateCharacter(TDatabase *Database, int WorldID, int AccountID, const char *Name, int Sex){

@@ -1,15 +1,31 @@
 # Tibia 7.7 Query Manager
-This is a simple query manager designed to support [Tibia Game Server](https://github.com/fusion32/tibia-game), [Tibia Login Server](https://github.com/fusion32/tibia-login), and [Tibia Web Server](https://github.com/fusion32/tibia-web). It uses the SQLite3 3.50.2 amalgamation for a database backend so we can completely avoid having to spin up yet another service for a separate database system, effectively turning the query manager into the database itself. This design choice was made with a single game server in mind. The networking protocol is NOT encrypted at all and won't accept remote connections. For a fully multi-world distributed infrastructure, a distributed database system like PostgreSQL and MySQL/MariaDB should be considered.
+This is a query manager designed to support [Tibia Game Server](https://github.com/fusion32/tibia-game), [Tibia Login Server](https://github.com/fusion32/tibia-login), and [Tibia Web Server](https://github.com/fusion32/tibia-web). It should be able to support any database system, but only SQLite and PostgreSQL are currently implemented. For SQLite, it uses the SQLite3 3.50.2 amalgamation, which avoids external dependencies and effectivelly turns the query manager into the database itself. For PostgreSQL, you'll need to link against *libpq*, but the query manager turns into a relay to the actual database. The communication protocol is NOT encrypted at all and it's configured to listen to local connections only. If you need a distributed infrastructure, use PostgreSQL!
 
 ## Compiling
-Even though there are no Linux specific features being used, it will currently only compile on Linux. It should be simple enough to support compiling on Windows but I don't think it would add any value, considering the game server needs to run on Linux and they need to be both on the same machine. The makefile is very simple and there are **ZERO** dependencies required. You can add the `-j N` switch to make it compile across N processes.
+Currently only Linux is supported. It shouldn't be too difficult to support Windows but I don't think it would add any value, considering the game server is somewhat bound to Linux, and that both need to run on the same machine. The only dependency is *libpq* when using PostgreSQL. The makefile is very simple but there are a few parameters that can be modified to customize compilation:
+- *DEBUG* can be set to a non-zero value to build in debug mode. Defaults to zero.
+- *DATABASE* can be set to either *sqlite* or *postgres* to modify the database system. Defaults to *sqlite*.
+
+Compiling different translation units with different compilation parameters may cause things to blow up so it is recommended to always do a full rebuild. This can be achieved by running `make clean` before compiling or specifying the `-B` option to *make*. Here is a list of recommended commands:
 ```
-make                # build in release mode
-make DEBUG=1        # build in debug mode
-make clean          # remove `build` directory
+make -B DEBUG=0 DATABASE=sqlite        # build in release mode with SQLite
+make -B DEBUG=1 DATABASE=sqlite        # build in debug mode with SQLite
+make -B DEBUG=0 DATABASE=postgres      # build in release mode with PostgreSQL
+make -B DEBUG=1 DATABASE=postgres      # build in debug mode with PostgreSQL
+make clean                             # remove `build` directory
 ```
+
+## Running (SQLite)
+The query manager becomes the database, automatically initializing and maintaining the schema, based on the files in `sqlite/` (see `sqlite/README.txt`). The default schema file won't automatically insert any initial data (see `sqlite/init.sql`), although you could put some insertions at the end to avoid having to manually run something like `sqlite/init.sql`. There are a few configuration options, and in particular `SQLite.*` options that could be adjusted in `config.cfg` but the defaults should work for most use cases.
+
+## Running (PostgreSQL)
+The query manager becomes a relay to the actual database. And with PostgreSQL being a distributed database system, it makes no sense to have individual clients managing the schema, since there could be multiple, each with their own assumptions. For that reason there is a `SchemaInfo` table with a `VERSION` row that will be queried at startup and compared against `POSTGRESQL_SCHEMA_VERSION`, defined in `src/database_postgres.cc`, to make sure there is an agreement on the schema version. It is hardcoded because schema changes will usually result in query changes.
+
+Aside from having to properly setup and startup a PostgreSQL server (see `postgres/README.txt`), there are quite a few specific extra options (`PostgreSQL.*`) that should be properly configured to be able to reach the database.
 
 ## Running
-The query manager will automatically manage the database schema based on files in `sql/` (see `sql/README.txt`), but won't automatically insert any initial data (see `sql/init.sql`). It does have a few configuration options that are loaded from `config.cfg` but the defaults should work for most use cases.
+For testing purposes you could simply compile and launch the application from the shell, but if you plan to run the game server on a dedicated machine, it is recommended that it is setup as a service. There is a *systemd* configuration file (`tibia-querymanager.service`) in the repository that may be used for that purpose. The process is very similar to the one described in the [Game Server](https://github.com/fusion32/tibia-game) so I won't repeat myself here.
 
-It is recommended that the query manager is setup as a service. There is a *systemd* configuration file (`tibia-querymanager.service`) in the repository that may be used for that purpose. The process is very similar to the one described in the [Game Server](https://github.com/fusion32/tibia-game) so I won't repeat myself here.
+## Text Encoding
+The original game client and server uses LATIN1 text encoding, which can be a problem if we're assuming strings are UTF8 encoded. For that reason, `TReadBuffer::ReadString` will automatically convert from LATIN1 to UTF8, and `TWriteBuffer::WriteString` will automatically convert from UTF8 to LATIN1, to ensure that LATIN1 is still used as the text encoding of the underlying protocol. This behaviour can be disabled with the `-DCLIENT_ENCODING_UTF8=1` compilation flag but unless you move this encoding bridge to the server-client boundary, you'll have problems. And it's not such a simple task either. Upgrading the game server to UTF8 would require updating game files, changing the script parser, and would ultimately make it incompatible with the leaked game files.
+
