@@ -473,7 +473,7 @@ bool GetWorlds(TDatabase *Database, DynamicArray<TWorld> *Worlds){
 				"SELECT WorldID, COUNT(*) FROM OnlineCharacters GROUP BY WorldID"
 			")"
 			" SELECT W.Name, W.Type, COALESCE(N.NumPlayers, 0), W.MaxPlayers,"
-				" W.OnlineRecord, W.OnlineRecordTimestamp"
+				" W.OnlinePeak, W.OnlinePeakTimestamp, W.LastStartup, W.LastShutdown"
 			" FROM Worlds AS W"
 			" LEFT JOIN N ON W.WorldID = N.WorldID");
 	if(Stmt == NULL){
@@ -488,8 +488,10 @@ bool GetWorlds(TDatabase *Database, DynamicArray<TWorld> *Worlds){
 		World.Type = sqlite3_column_int(Stmt, 1);
 		World.NumPlayers = sqlite3_column_int(Stmt, 2);
 		World.MaxPlayers = sqlite3_column_int(Stmt, 3);
-		World.OnlineRecord = sqlite3_column_int(Stmt, 4);
-		World.OnlineRecordTimestamp = sqlite3_column_int(Stmt, 5);
+		World.OnlinePeak = sqlite3_column_int(Stmt, 4);
+		World.OnlinePeakTimestamp = sqlite3_column_int(Stmt, 5);
+		World.LastStartup = sqlite3_column_int(Stmt, 6);
+		World.LastShutdown = sqlite3_column_int(Stmt, 7);
 		Worlds->Push(World);
 	}
 
@@ -964,8 +966,8 @@ bool GetCharacterProfile(TDatabase *Database, const char *CharacterName, TCharac
 			" LEFT JOIN Accounts AS A ON A.AccountID = C.AccountID"
 			" LEFT JOIN CharacterRights AS R"
 				" ON R.CharacterID = C.CharacterID"
-				" AND R.Right = 'NO_STATISTICS'"
-			" WHERE C.Name = ?1 AND R.Right IS NULL");
+				" AND R.Name = 'NO_STATISTICS'"
+			" WHERE C.Name = ?1 AND R.Name IS NULL");
 	if(Stmt == NULL){
 		LOG_ERR("Failed to prepare query");
 		return false;
@@ -1007,7 +1009,7 @@ bool GetCharacterRight(TDatabase *Database, int CharacterID, const char *Right, 
 	ASSERT(Database != NULL && Right != NULL && HasRight != NULL);
 	sqlite3_stmt *Stmt = PrepareQuery(Database,
 			"SELECT 1 FROM CharacterRights"
-			" WHERE CharacterID = ?1 AND Right = ?2");
+			" WHERE CharacterID = ?1 AND Name = ?2");
 	if(Stmt == NULL){
 		LOG_ERR("Failed to prepare query");
 		return false;
@@ -1033,7 +1035,7 @@ bool GetCharacterRight(TDatabase *Database, int CharacterID, const char *Right, 
 bool GetCharacterRights(TDatabase *Database, int CharacterID, DynamicArray<TCharacterRight> *Rights){
 	ASSERT(Database != NULL && Rights != NULL);
 	sqlite3_stmt *Stmt = PrepareQuery(Database,
-			"SELECT Right FROM CharacterRights WHERE CharacterID = ?1");
+			"SELECT Name FROM CharacterRights WHERE CharacterID = ?1");
 	if(Stmt == NULL){
 		LOG_ERR("Failed to prepare query");
 		return false;
@@ -2464,12 +2466,12 @@ bool InsertOnlineCharacters(TDatabase *Database, int WorldID,
 	return true;
 }
 
-bool CheckOnlineRecord(TDatabase *Database, int WorldID, int NumCharacters, bool *NewRecord){
-	ASSERT(Database != NULL && NewRecord != NULL);
+bool CheckOnlinePeak(TDatabase *Database, int WorldID, int NumCharacters, bool *NewPeak){
+	ASSERT(Database != NULL && NewPeak != NULL);
 	sqlite3_stmt *Stmt = PrepareQuery(Database,
-			"UPDATE Worlds SET OnlineRecord = ?2,"
-				" OnlineRecordTimestamp = UNIXEPOCH()"
-			" WHERE WorldID = ?1 AND OnlineRecord < ?2");
+			"UPDATE Worlds SET OnlinePeak = ?2,"
+				" OnlinePeakTimestamp = UNIXEPOCH()"
+			" WHERE WorldID = ?1 AND OnlinePeak < ?2");
 	if(Stmt == NULL){
 		LOG_ERR("Failed to prepare query");
 		return false;
@@ -2487,7 +2489,55 @@ bool CheckOnlineRecord(TDatabase *Database, int WorldID, int NumCharacters, bool
 		return false;
 	}
 
-	*NewRecord = (sqlite3_changes(Database->Handle) > 0);
+	*NewPeak = (sqlite3_changes(Database->Handle) > 0);
+	return true;
+}
+
+bool CheckWorldStartupTime(TDatabase *Database, int WorldID){
+	ASSERT(Database != NULL);
+	sqlite3_stmt *Stmt = PrepareQuery(Database,
+			"UPDATE Worlds SET LastStartup = UNIXEPOCH()"
+			" WHERE WorldID = ?1 AND LastStartup <= LastShutdown");
+	if(Stmt == NULL){
+		LOG_ERR("Failed to prepare query");
+		return false;
+	}
+
+	AutoStmtReset StmtReset(Stmt);
+	if(sqlite3_bind_int(Stmt, 1, WorldID) != SQLITE_OK){
+		LOG_ERR("Failed to bind WorldID: %s", sqlite3_errmsg(Database->Handle));
+		return false;
+	}
+
+	if(sqlite3_step(Stmt) != SQLITE_DONE){
+		LOG_ERR("Failed to execute query: %s", sqlite3_errmsg(Database->Handle));
+		return false;
+	}
+
+	return true;
+}
+
+bool CheckWorldShutdownTime(TDatabase *Database, int WorldID){
+	ASSERT(Database != NULL);
+	sqlite3_stmt *Stmt = PrepareQuery(Database,
+			"UPDATE Worlds SET LastShutdown = UNIXEPOCH()"
+			" WHERE WorldID = ?1 AND LastShutdown <= LastStartup");
+	if(Stmt == NULL){
+		LOG_ERR("Failed to prepare query");
+		return false;
+	}
+
+	AutoStmtReset StmtReset(Stmt);
+	if(sqlite3_bind_int(Stmt, 1, WorldID) != SQLITE_OK){
+		LOG_ERR("Failed to bind WorldID: %s", sqlite3_errmsg(Database->Handle));
+		return false;
+	}
+
+	if(sqlite3_step(Stmt) != SQLITE_DONE){
+		LOG_ERR("Failed to execute query: %s", sqlite3_errmsg(Database->Handle));
+		return false;
+	}
+
 	return true;
 }
 

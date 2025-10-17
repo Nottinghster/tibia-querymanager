@@ -19,7 +19,7 @@ INSERT INTO Accounts (AccountID, Email, Auth)
 INSERT INTO Characters (WorldID, CharacterID, AccountID, Name, Sex)
 	VALUES (1, 1, 111111, 'Gamemaster', 1), (1, 2, 111111, 'Player', 1);
 
-INSERT INTO CharacterRights (CharacterID, Right)
+INSERT INTO CharacterRights (CharacterID, Name)
 	VALUES
 		(1, 'NOTATION'),
 		(1, 'NAMELOCK'),

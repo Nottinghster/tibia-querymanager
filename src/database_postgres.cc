@@ -1325,7 +1325,7 @@ bool GetWorlds(TDatabase *Database, DynamicArray<TWorld> *Worlds){
 				"SELECT WorldID, COUNT(*) FROM OnlineCharacters GROUP BY WorldID"
 			")"
 			" SELECT W.Name, W.Type, COALESCE(N.NumPlayers, 0), W.MaxPlayers,"
-				" W.OnlineRecord, W.OnlineRecordTimestamp"
+				" W.OnlinePeak, W.OnlinePeakTimestamp, W.LastStartup, W.LastShutdown"
 			" FROM Worlds AS W"
 			" LEFT JOIN N ON W.WorldID = N.WorldID");
 	if(Stmt == NULL){
@@ -1347,8 +1347,10 @@ bool GetWorlds(TDatabase *Database, DynamicArray<TWorld> *Worlds){
 		World.Type = GetResultInt(Result, Row, 1);
 		World.NumPlayers = GetResultInt(Result, Row, 2);
 		World.MaxPlayers = GetResultInt(Result, Row, 3);
-		World.OnlineRecord = GetResultInt(Result, Row, 4);
-		World.OnlineRecordTimestamp = GetResultTimestamp(Result, Row, 5);
+		World.OnlinePeak = GetResultInt(Result, Row, 4);
+		World.OnlinePeakTimestamp = GetResultTimestamp(Result, Row, 5);
+		World.LastStartup = GetResultTimestamp(Result, Row, 6);
+		World.LastShutdown = GetResultTimestamp(Result, Row, 7);
 		Worlds->Push(World);
 	}
 
@@ -3299,12 +3301,12 @@ bool InsertOnlineCharacters(TDatabase *Database, int WorldID,
 	return true;
 }
 
-bool CheckOnlineRecord(TDatabase *Database, int WorldID, int NumCharacters, bool *NewRecord){
-	ASSERT(Database != NULL && NewRecord != NULL);
+bool CheckOnlinePeak(TDatabase *Database, int WorldID, int NumCharacters, bool *NewPeak){
+	ASSERT(Database != NULL && NewPeak != NULL);
 	const char *Stmt = PrepareQuery(Database,
-			"UPDATE Worlds SET OnlineRecord = $2::INTEGER,"
-				" OnlineRecordTimestamp = CURRENT_TIMESTAMP"
-			" WHERE WorldID = $1::INTEGER AND OnlineRecord < $2::INTEGER");
+			"UPDATE Worlds SET OnlinePeak = $2::INTEGER,"
+				" OnlinePeakTimestamp = CURRENT_TIMESTAMP"
+			" WHERE WorldID = $1::INTEGER AND OnlinePeak < $2::INTEGER");
 	if(Stmt == NULL){
 		LOG_ERR("Failed to prepare query");
 		return false;
@@ -3322,7 +3324,55 @@ bool CheckOnlineRecord(TDatabase *Database, int WorldID, int NumCharacters, bool
 		return false;
 	}
 
-	*NewRecord = (ResultAffectedRows(Result) > 0);
+	*NewPeak = (ResultAffectedRows(Result) > 0);
+	return true;
+}
+
+bool CheckWorldStartupTime(TDatabase *Database, int WorldID){
+	ASSERT(Database != NULL);
+	const char *Stmt = PrepareQuery(Database,
+			"UPDATE Worlds SET LastStartup = CURRENT_TIMESTAMP"
+			" WHERE WorldID = $1::INTEGER AND LastStartup <= LastShutdown");
+	if(Stmt == NULL){
+		LOG_ERR("Failed to prepare query");
+		return false;
+	}
+
+	ParamBuffer Params = {};
+	ParamBegin(&Params, 1, 1);
+	ParamInt(&Params, WorldID);
+	PGresult *Result = PQexecPrepared(Database->Handle, Stmt, Params.NumParams,
+							Params.Values, Params.Lengths, Params.Formats, 1);
+	AutoResultClear ResultGuard(Result);
+	if(PQresultStatus(Result) != PGRES_COMMAND_OK){
+		LOG_ERR("Failed to execute query: %s", PQerrorMessage(Database->Handle));
+		return false;
+	}
+
+	return true;
+}
+
+bool CheckWorldShutdownTime(TDatabase *Database, int WorldID){
+	ASSERT(Database != NULL);
+	const char *Stmt = PrepareQuery(Database,
+			"UPDATE Worlds SET LastShutdown = CURRENT_TIMESTAMP"
+			" WHERE WorldID = $1::INTEGER AND LastShutdown <= LastStartup");
+	if(Stmt == NULL){
+		LOG_ERR("Failed to prepare query");
+		return false;
+	}
+
+	ParamBuffer Params = {};
+	ParamBegin(&Params, 1, 1);
+	ParamInt(&Params, WorldID);
+	PGresult *Result = PQexecPrepared(Database->Handle, Stmt, Params.NumParams,
+							Params.Values, Params.Lengths, Params.Formats, 1);
+	AutoResultClear ResultGuard(Result);
+	if(PQresultStatus(Result) != PGRES_COMMAND_OK){
+		LOG_ERR("Failed to execute query: %s", PQerrorMessage(Database->Handle));
+		return false;
+	}
+
 	return true;
 }
 

@@ -29,7 +29,7 @@ static int g_NumWorkers;
 static TWorker *g_Workers;
 static TQueryQueue *g_QueryQueue;
 
-// Query Name
+// Query Queue and Workers
 //==============================================================================
 const char *QueryName(int QueryType){
 	const char *Name = "";
@@ -81,8 +81,6 @@ const char *QueryName(int QueryType){
 	return Name;
 }
 
-// Query Queue and Workers
-//==============================================================================
 TQuery *QueryNew(void){
 	TQuery *Query = (TQuery*)calloc(1, sizeof(TQuery));
 	AtomicStore(&Query->RefCount, 1);
@@ -1251,11 +1249,7 @@ void ProcessCreatePlayerlist(TDatabase *Database, TQuery *Query){
 	QUERY_STOP_IF(!Tx.Begin(Database));
 	QUERY_STOP_IF(!DeleteOnlineCharacters(Database, Query->WorldID));
 
-	// TODO(fusion): I think `NumCharacters` may be used to signal that the
-	// server is going OFFLINE, in which case we'd have to add an `Online`
-	// column to `Worlds` and update it here.
-
-	bool NewRecord = false;
+	bool NewPeak = false;
 	int NumCharacters = (int)Request.Read16();
 	if(NumCharacters != 0xFFFF && NumCharacters > 0){
 		TOnlineCharacter *Characters = (TOnlineCharacter*)alloca(NumCharacters * sizeof(TOnlineCharacter));
@@ -1266,13 +1260,19 @@ void ProcessCreatePlayerlist(TDatabase *Database, TQuery *Query){
 		}
 
 		QUERY_STOP_IF(!InsertOnlineCharacters(Database, Query->WorldID, NumCharacters, Characters));
-		QUERY_STOP_IF(!CheckOnlineRecord(Database, Query->WorldID, NumCharacters, &NewRecord));
+		QUERY_STOP_IF(!CheckOnlinePeak(Database, Query->WorldID, NumCharacters, &NewPeak));
+	}
+
+	if(NumCharacters == 0xFFFF){
+		QUERY_STOP_IF(!CheckWorldShutdownTime(Database, Query->WorldID));
+	}else{
+		QUERY_STOP_IF(!CheckWorldStartupTime(Database, Query->WorldID));
 	}
 
 	QUERY_STOP_IF(!Tx.Commit());
 
 	TWriteBuffer *Response = QueryBeginResponse(Query, QUERY_STATUS_OK);
-	Response->WriteFlag(NewRecord);
+	Response->WriteFlag(NewPeak);
 	QueryFinishResponse(Query);
 }
 
@@ -1509,8 +1509,10 @@ void ProcessGetWorlds(TDatabase *Database, TQuery *Query){
 		Response->Write8((uint8)Worlds[i].Type);
 		Response->Write16((uint16)Worlds[i].NumPlayers);
 		Response->Write16((uint16)Worlds[i].MaxPlayers);
-		Response->Write16((uint16)Worlds[i].OnlineRecord);
-		Response->Write32((uint32)Worlds[i].OnlineRecordTimestamp);
+		Response->Write16((uint16)Worlds[i].OnlinePeak);
+		Response->Write32((uint32)Worlds[i].OnlinePeakTimestamp);
+		Response->Write32((uint32)Worlds[i].LastStartup);
+		Response->Write32((uint32)Worlds[i].LastShutdown);
 	}
 	QueryFinishResponse(Query);
 }

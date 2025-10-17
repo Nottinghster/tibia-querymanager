@@ -825,8 +825,10 @@ struct TWorld{
 	int Type;
 	int NumPlayers;
 	int MaxPlayers;
-	int OnlineRecord;
-	int OnlineRecordTimestamp;
+	int OnlinePeak;
+	int OnlinePeakTimestamp;
+	int LastStartup;
+	int LastShutdown;
 };
 
 struct TWorldConfig{
@@ -1083,7 +1085,9 @@ bool GetOnlineCharacters(TDatabase *Database, int WorldID, DynamicArray<TOnlineC
 bool DeleteOnlineCharacters(TDatabase *Database, int WorldID);
 bool InsertOnlineCharacters(TDatabase *Database, int WorldID,
 		int NumCharacters, TOnlineCharacter *Characters);
-bool CheckOnlineRecord(TDatabase *Database, int WorldID, int NumCharacters, bool *NewRecord);
+bool CheckOnlinePeak(TDatabase *Database, int WorldID, int NumCharacters, bool *NewPeak);
+bool CheckWorldStartupTime(TDatabase *Database, int WorldID);
+bool CheckWorldShutdownTime(TDatabase *Database, int WorldID);
 
 // query.cc
 //==============================================================================

@@ -42,8 +42,10 @@ CREATE TABLE Worlds (
     PremiumPlayerBuffer SMALLINT NOT NULL,
     MaxNewbies SMALLINT NOT NULL,
     PremiumNewbieBuffer SMALLINT NOT NULL,
-    OnlineRecord SMALLINT NOT NULL DEFAULT 0,
-    OnlineRecordTimestamp TIMESTAMPTZ NOT NULL DEFAULT 'epoch',
+    OnlinePeak SMALLINT NOT NULL DEFAULT 0,
+    OnlinePeakTimestamp TIMESTAMPTZ NOT NULL DEFAULT 'epoch',
+    LastStartup TIMESTAMPTZ NOT NULL DEFAULT 'epoch',
+    LastShutdown TIMESTAMPTZ NOT NULL DEFAULT 'epoch',
     PRIMARY KEY (WorldID),
     UNIQUE (Name)
 );
