@@ -243,9 +243,9 @@ bool StringFormatTime(char *Dest, int DestCapacity, const char *Format, int Time
 	struct tm tm = GetLocalTime((int)Timestamp);
 	int Result = (int)strftime(Dest, DestCapacity, Format, &tm);
 
-	// NOTE(fusion): `strftime` will should return ZERO if it's unable to fit
-	// the result in the supplied buffer, which is annoying because ZERO may
-	// not represent a failure if the result is an empty string.
+	// NOTE(fusion): `strftime` will return ZERO if it's unable to fit the result
+	// in the supplied buffer, which is annoying because ZERO may not represent a
+	// failure if the result is an empty string.
 	ASSERT(Result >= 0 && Result < DestCapacity);
 	if(Result == 0){
 		memset(Dest, 0, DestCapacity);

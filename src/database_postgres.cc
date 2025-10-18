@@ -285,10 +285,20 @@ static int ResultAffectedRows(PGresult *Result){
 	return AffectedRows;
 }
 
+// IMPORTANT(fusion): `GetResult*` helpers need to properly handle NULL values.
+// In text format, they're represented as empty strings which could cause parsing
+// errors. In binary format, they're represented as zero length blobs which could
+// cause assertions to fire.
+
 static bool GetResultBool(PGresult *Result, int Row, int Col){
 	bool Value = false;
+	if(PQgetisnull(Result, Row, Col)){
+		return Value;
+	}
+
 	int Format = PQfformat(Result, Col);
 	Oid Type = PQftype(Result, Col);
+	ASSERT(Format == 0 || Format == 1);
 	if(Format == 0){       // TEXT FORMAT
 		if(!ParseBoolean(&Value, PQgetvalue(Result, Row, Col))){
 			LOG_ERR("Failed to properly parse column (%d) %s as BOOLEAN",
@@ -341,6 +351,10 @@ static bool GetResultBool(PGresult *Result, int Row, int Col){
 
 static int GetResultInt(PGresult *Result, int Row, int Col){
 	int Value = 0;
+	if(PQgetisnull(Result, Row, Col)){
+		return Value;
+	}
+
 	int Format = PQfformat(Result, Col);
 	Oid Type = PQftype(Result, Col);
 	ASSERT(Format == 0 || Format == 1);
@@ -402,6 +416,10 @@ static int GetResultInt(PGresult *Result, int Row, int Col){
 
 static const char *GetResultText(PGresult *Result, int Row, int Col){
 	const char *Text = "";
+	if(PQgetisnull(Result, Row, Col)){
+		return Text;
+	}
+
 	int Format = PQfformat(Result, Col);
 	Oid Type = PQftype(Result, Col);
 	ASSERT(Format == 0 || Format == 1);
@@ -433,6 +451,10 @@ static const char *GetResultText(PGresult *Result, int Row, int Col){
 
 static int GetResultByteA(PGresult *Result, int Row, int Col, uint8 *Buffer, int BufferSize){
 	int Size = -1;
+	if(PQgetisnull(Result, Row, Col)){
+		return Size;
+	}
+
 	int Format = PQfformat(Result, Col);
 	ASSERT(Format == 0 || Format == 1);
 	if(Format == 0){       // TEXT FORMAT
@@ -454,11 +476,15 @@ static int GetResultByteA(PGresult *Result, int Row, int Col, uint8 *Buffer, int
 	return Size;
 }
 
-#if 0
+#if 1
 // NOTE(fusion): DO NOT REMOVE. It is currently not being used so it's switched
 // off to avoid compiler warnings.
 static int GetResultIPAddress(PGresult *Result, int Row, int Col){
 	int IPAddress = 0;
+	if(PQgetisnull(Result, Row, Col)){
+		return IPAddress;
+	}
+
 	int Format = PQfformat(Result, Col);
 	Oid Type = PQftype(Result, Col);
 	ASSERT(Format == 0 || Format == 1);
@@ -573,6 +599,10 @@ static bool ParseTimestamp(int *Dest, const char *String){
 
 static int GetResultTimestamp(PGresult *Result, int Row, int Col){
 	int Timestamp = 0;
+	if(PQgetisnull(Result, Row, Col)){
+		return Timestamp;
+	}
+
 	int Format = PQfformat(Result, Col);
 	Oid Type = PQftype(Result, Col);
 	ASSERT(Format == 0 || Format == 1);
@@ -842,6 +872,10 @@ static bool ParseInterval(int *Dest, const char *String){
 
 static int GetResultInterval(PGresult *Result, int Row, int Col){
 	int Interval = 0;
+	if(PQgetisnull(Result, Row, Col)){
+		return Interval;
+	}
+
 	int Format = PQfformat(Result, Col);
 	Oid Type = PQftype(Result, Col);
 	ASSERT(Format == 0 || Format == 1);
@@ -1242,22 +1276,26 @@ TDatabase *DatabaseOpen(void){
 		// TODO(fusion): REMOVE. This is for testing query input/output, to make sure
 		// they're consitent across different formats (text/binary).
 		const char *Stmt = PrepareQuery(Database,
-				"SELECT $1::INTERVAL, $2::INTERVAL");
+				"SELECT NULL::BOOLEAN, NULL::INTEGER, NULL::TEXT, NULL::BYTEA,"
+					" NULL::INET, NULL::TIMESTAMP, NULL::INTERVAL");
 		ASSERT(Stmt != NULL);
 
 		for(int i = 0; i <= 1; i += 1)
 		for(int j = 0; j <= 1; j += 1){
 			LOG("TEST (%d, %d)", i, j);
 			ParamBuffer Params;
-			ParamBegin(&Params, 2, i);
-			ParamInterval(&Params, 86400 + 3600);
-			ParamInterval(&Params, - 86400 * 4 + 7 * 3600);
+			ParamBegin(&Params, 0, i);
 			PGresult *Result = PQexecPrepared(Database->Handle, Stmt, Params.NumParams,
 										Params.Values, Params.Lengths, Params.Formats, j);
 			AutoResultClear ResultGuard(Result);
 			if(PQresultStatus(Result) == PGRES_TUPLES_OK){
-				LOG("0: %d", GetResultInterval(Result, 0, 0));
-				LOG("1: %d", GetResultInterval(Result, 0, 1));
+				LOG("0: %d", GetResultBool(Result, 0, 0));
+				LOG("1: %d", GetResultInt(Result, 0, 1));
+				LOG("2: %s", GetResultText(Result, 0, 2));
+				LOG("3: %d", GetResultByteA(Result, 0, 3, NULL, 0));
+				LOG("4: %d", GetResultIPAddress(Result, 0, 4));
+				LOG("5: %d", GetResultTimestamp(Result, 0, 5));
+				LOG("6: %d", GetResultInterval(Result, 0, 6));
 			}else{
 				LOG_ERR("Failed to execute query: %s", PQerrorMessage(Database->Handle));
 			}

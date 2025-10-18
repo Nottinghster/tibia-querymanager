@@ -412,9 +412,8 @@ static bool CheckDatabaseSchema(TDatabase *Database){
 		return false;
 	}
 
-	// IMPORTANT(fusion): After checking the application id, we want to apply
-	// patches before checking user version, just in case some migration needs
-	// to take place.
+	// IMPORTANT(fusion): We want to apply patches before checking user version,
+	// just in case some migration needs to take place.
 	if(!ApplyDatabasePatches(Database, "sqlite/patches")){
 		LOG_ERR("Failed to apply database patches");
 		return false;

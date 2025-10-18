@@ -7,5 +7,6 @@ files will be executed exactly ONCE. If multiple patches are pending at startup,
 they're executed in alphabetical order.
   As for statement restrictions, the only thing prohibited is the presence of
 transaction statements "BEGIN", "ROLLBACK", and "COMMIT". This is because all
-patches will be bundled into the same transaction, to ensure atomicity.
+patches will be bundled into the same transaction, to ensure atomicity, and
+there can't be nested transactions.
 
