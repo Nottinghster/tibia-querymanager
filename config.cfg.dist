@@ -11,8 +11,8 @@ SQLite.MaxCachedStatements      = 100
 # Empty values are ignored, meaning their defaults will be used instead.
 #  For more information see:
 #   https://www.postgresql.org/docs/current/libpq-connect.html#LIBPQ-PARAMKEYWORDS
-PostgreSQL.Host                 = "localhost"
-PostgreSQL.Port                 = "5432"
+PostgreSQL.Host                 = ""
+PostgreSQL.Port                 = ""
 PostgreSQL.DBName               = "tibia"
 PostgreSQL.User                 = "tibia"
 PostgreSQL.Password             = ""

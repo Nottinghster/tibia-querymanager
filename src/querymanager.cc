@@ -780,8 +780,8 @@ int main(int argc, const char **argv){
 	g_Config.SQLite.MaxCachedStatements = 100;
 
 	// PostgreSQL Config
-	StringBufCopy(g_Config.PostgreSQL.Host,            "localhost");
-	StringBufCopy(g_Config.PostgreSQL.Port,            "5432");
+	StringBufCopy(g_Config.PostgreSQL.Host,            "");
+	StringBufCopy(g_Config.PostgreSQL.Port,            "");
 	StringBufCopy(g_Config.PostgreSQL.DBName,          "tibia");
 	StringBufCopy(g_Config.PostgreSQL.User,            "tibia");
 	StringBufCopy(g_Config.PostgreSQL.Password,        "");

@@ -1,6 +1,6 @@
--- NOTE(fusion): This file contains sample initial data and will be executed
--- automatically as a patch by the query manager. See `sqlite/README.txt` for
--- more details.
+-- NOTE(fusion): This file contains sample initial data and can be executed
+-- automatically as a patch by the query manager if placed at `sqlite/patches`.
+-- See `sqlite/README.txt` for more details.
 --==============================================================================
 
 INSERT INTO Worlds (WorldID, Name, Type, RebootTime, Host, Port, MaxPlayers,

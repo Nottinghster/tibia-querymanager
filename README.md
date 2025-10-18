@@ -16,7 +16,7 @@ make clean                             # remove `build` directory
 ```
 
 ## Running (SQLite)
-The query manager becomes the database, automatically initializing and maintaining the schema, based on the files in `sqlite/` (see `sqlite/README.txt`). The default schema file won't automatically insert any initial data (see `sqlite/init.sql`), although you could put some insertions at the end to avoid having to manually run something like `sqlite/init.sql`. There are a few configuration options, and in particular `SQLite.*` options that can be adjusted in `config.cfg` but the defaults should work for most use cases.
+The query manager becomes the database, automatically initializing and maintaining the schema, based on the files in `sqlite/` (see `sqlite/README.txt`). The default schema file won't automatically insert any initial data but that can be changed by using a patch (again, see `sqlite/README.txt`). There are a few configuration options, and in particular `SQLite.*` options that can be adjusted in `config.cfg` but the defaults should work for most use cases.
 
 ## Running (PostgreSQL)
 The query manager becomes a relay to the actual database. And with PostgreSQL being a distributed database system, it makes no sense to have individual clients managing the schema, since there could be multiple, each with their own assumptions. For that reason there is a `SchemaInfo` table with a `VERSION` row that will be queried at startup and compared against `POSTGRESQL_SCHEMA_VERSION`, defined in `src/database_postgres.cc`, to make sure there is an agreement on the schema version. It is hardcoded because schema changes will usually result in query changes.
