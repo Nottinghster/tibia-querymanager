@@ -1,12 +1,7 @@
--- NOTE(fusion): The query manager WON'T automatically run this but the game
--- server still requires at least the world config to be able to boot up. It
--- is probably a good idea to keep this separated from `schema.sql` and then
--- running it with `sqlite3 -echo tibia.db < sqlite/init.sql`, although it is
--- not mandatory.
---	Because this isn't automatically managed, all queries are wrapped in a
--- transaction to avoid partial writes in case of errors.
+-- NOTE(fusion): This file contains sample initial data and will be executed
+-- automatically as a patch by the query manager. See `sqlite/README.txt` for
+-- more details.
 --==============================================================================
-BEGIN;
 
 INSERT INTO Worlds (WorldID, Name, Type, RebootTime, Host, Port, MaxPlayers,
 					PremiumPlayerBuffer, MaxNewbies, PremiumNewbieBuffer)
@@ -100,4 +95,3 @@ INSERT INTO CharacterRights (CharacterID, Name)
 		(1, 'CLEANUP_FIELDS'),
 		(1, 'NO_STATISTICS');
 
-COMMIT;

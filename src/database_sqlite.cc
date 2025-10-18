@@ -2,6 +2,17 @@
 #include "querymanager.hh"
 #include "sqlite3.h"
 
+#include <errno.h>
+#include <dirent.h>
+
+// NOTE(fusion): SQLite's application id, used to identify an existing database.
+// It is currently being set to ASCII "TiDB" for "Tibia Database".
+#define SQLITE_APPLICATION_ID 0x54694442
+
+// NOTE(fusion): SQLite's user version, used to track the current schema version.
+// It is hardcoded because schema changes will usually result in query changes.
+#define SQLITE_USER_VERSION 1
+
 struct TCachedStatement{
 	sqlite3_stmt     *Stmt;
 	int              LastUsed;
@@ -13,10 +24,6 @@ struct TDatabase{
 	int              MaxCachedStatements;
 	TCachedStatement *CachedStatements;
 };
-
-// NOTE(fusion): SQLite's application id. We're currently setting it to ASCII
-// "TiDB" for "Tibia Database".
-constexpr int g_ApplicationID = 0x54694442;
 
 // Statement Cache
 //==============================================================================
@@ -115,13 +122,23 @@ static sqlite3_stmt *PrepareQuery(TDatabase *Database, const char *Text){
 		Entry->Stmt = Stmt;
 		Entry->LastUsed = GetMonotonicUptime();
 		Entry->Hash = Hash;
+
+#if DEBUG_STATEMENT_CACHE
+		{
+			char Preview[30];
+			StringBufCopyEllipsis(Preview, Text);
+			LOG("New statement cached: \"%s\"", Preview);
+		}
+#endif
 	}else{
 		if(sqlite3_stmt_busy(Stmt) != 0){
-			LOG_WARN("Statement \"%.30s%s\" wasn't properly reset. Use the"
+			char Preview[30];
+			StringBufCopyEllipsis(Preview, Text);
+			LOG_WARN("Statement \"%s\" wasn't properly reset. Use the"
 					" `AutoStmtReset` wrapper or manually reset it after usage"
 					" to avoid it holding onto an older view of the database,"
 					" making changes from other processes not visible.",
-					Text, (strlen(Text) > 30 ? "..." : ""));
+					Preview);
 			sqlite3_reset(Stmt);
 		}
 
@@ -146,15 +163,6 @@ static sqlite3_stmt *PrepareQuery(TDatabase *Database, const char *Text){
 // using bound parameters. This means we need to assemble the entire query before
 // hand with snprintf or other similar formatting functions. In particular, this
 // rule apply for `application_id` and `user_version` which we modify.
-
-static bool FileExists(const char *FileName){
-	FILE *File = fopen(FileName, "rb");
-	bool Result = (File != NULL);
-	if(Result){
-		fclose(File);
-	}
-	return Result;
-}
 
 static bool ExecFile(TDatabase *Database, const char *FileName){
 	FILE *File = fopen(FileName, "rb");
@@ -211,25 +219,46 @@ static bool ExecInternal(TDatabase *Database, const char *Format, ...){
 	return true;
 }
 
-static bool GetPragmaInt(TDatabase *Database, const char *Name, int *OutValue){
+static bool QueryInternal(TDatabase *Database, int *OutValue, const char *Format, ...) ATTR_PRINTF(3, 4);
+static bool QueryInternal(TDatabase *Database, int *OutValue, const char *Format, ...){
+	va_list ap;
+	va_start(ap, Format);
 	char Text[1024];
-	snprintf(Text, sizeof(Text), "PRAGMA %s", Name);
+	int Written = vsnprintf(Text, sizeof(Text), Format, ap);
+	va_end(ap);
 
-	sqlite3_stmt *Stmt;
-	if(sqlite3_prepare_v2(Database->Handle, Text, -1, &Stmt, NULL) != SQLITE_OK){
-		LOG_ERR("Failed to retrieve %s (PREP): %s", Name, sqlite3_errmsg(Database->Handle));
+	if(Written >= (int)sizeof(Text)){
+		LOG_ERR("Query is too long");
 		return false;
 	}
 
-	bool Result = (sqlite3_step(Stmt) == SQLITE_ROW);
-	if(!Result){
-		LOG_ERR("Failed to retrieve %s (STEP): %s", Name, sqlite3_errmsg(Database->Handle));
-	}else if(OutValue){
+	sqlite3_stmt *Stmt;
+	if(sqlite3_prepare_v2(Database->Handle, Text, -1, &Stmt, NULL) != SQLITE_OK){
+		LOG_ERR("Failed to prepare query \"%s\": %s",
+				Text, sqlite3_errmsg(Database->Handle));
+		return false;
+	}
+
+	int ErrorCode = sqlite3_step(Stmt);
+	if(ErrorCode != SQLITE_ROW && ErrorCode != SQLITE_DONE){
+		LOG_ERR("Failed to execute query \"%s\": %s",
+				Text, sqlite3_errmsg(Database->Handle));
+		sqlite3_finalize(Stmt);
+		return false;
+	}
+
+	if(OutValue != NULL){
+		if(ErrorCode == SQLITE_DONE || sqlite3_data_count(Stmt) == 0){
+			LOG_ERR("Query \"%s\" returned no data", Text);
+			sqlite3_finalize(Stmt);
+			return false;
+		}
+
 		*OutValue = sqlite3_column_int(Stmt, 0);
 	}
 
 	sqlite3_finalize(Stmt);
-	return Result;
+	return true;
 }
 
 static bool InitDatabaseSchema(TDatabase *Database){
@@ -238,95 +267,170 @@ static bool InitDatabaseSchema(TDatabase *Database){
 		return false;
 	}
 
+	// IMPORTANT(fusion): The schema init script should set`application_id` and
+	// `user_version` appropriately.
 	if(!ExecFile(Database, "sqlite/schema.sql")){
 		LOG_ERR("Failed to execute \"sqlite/schema.sql\"");
-		return false;
-	}
-
-	if(!ExecInternal(Database, "PRAGMA application_id = %d", g_ApplicationID)){
-		LOG_ERR("Failed to set application id");
-		return false;
-	}
-
-	if(!ExecInternal(Database, "PRAGMA user_version = 1")){
-		LOG_ERR("Failed to set user version");
 		return false;
 	}
 
 	return Tx.Commit();
 }
 
-static bool UpgradeDatabaseSchema(TDatabase *Database, int UserVersion){
-	char FileName[256];
-	int NewVersion = UserVersion;
-	while(true){
-		snprintf(FileName, sizeof(FileName), "sqlite/upgrade-%d.sql", NewVersion);
-		if(FileExists(FileName)){
-			NewVersion += 1;
-		}else{
-			break;
-		}
-	}
-
-	if(UserVersion != NewVersion){
-		LOG("Upgrading database schema to version %d", NewVersion);
-
-		TransactionScope Tx("SchemaUpgrade");
-		if(!Tx.Begin(Database)){
-			return false;
-		}
-
-		while(UserVersion < NewVersion){
-			snprintf(FileName, sizeof(FileName), "upgrade-%d.sql", UserVersion);
-			if(!ExecFile(Database, FileName)){
-				LOG_ERR("Failed to execute \"%s\"", FileName);
-				return false;
-			}
-			UserVersion += 1;
-		}
-
-		if(!ExecInternal(Database, "PRAGMA user_version = %d", UserVersion)){
-			LOG_ERR("Failed to set user version");
-			return false;
-		}
-
-		if(!Tx.Commit()){
-			return false;
-		}
-	}
-
-	return true;
-}
-
-static bool CheckDatabaseSchema(TDatabase *Database){
-	int ApplicationID, UserVersion;
-	if(!GetPragmaInt(Database, "application_id", &ApplicationID)
-	|| !GetPragmaInt(Database, "user_version", &UserVersion)){
+static bool GetPatchTimestamp(TDatabase *Database, const char *FileName, int *Timestamp){
+	sqlite3_stmt *Stmt;
+	const char *Text = "SELECT Timestamp FROM Patches WHERE FileName = ?1";
+	if(sqlite3_prepare_v2(Database->Handle, Text, -1, &Stmt, NULL) != SQLITE_OK
+	|| sqlite3_bind_text(Stmt, 1, FileName, -1, NULL)              != SQLITE_OK){
+		LOG_ERR("Failed to prepare query: %s", sqlite3_errmsg(Database->Handle));
+		sqlite3_finalize(Stmt);
 		return false;
 	}
 
-	if(ApplicationID != g_ApplicationID){
-		if(ApplicationID != 0){
-			LOG_ERR("Database has unknown application id %08X (expected %08X)",
-					ApplicationID, g_ApplicationID);
-			return false;
-		}else if(UserVersion != 0){
-			LOG_ERR("Database has non zero user version %d", UserVersion);
-			return false;
-		}else if(!InitDatabaseSchema(Database)){
+	int ErrorCode = sqlite3_step(Stmt);
+	if(ErrorCode != SQLITE_ROW && ErrorCode != SQLITE_DONE){
+		LOG_ERR("Failed to execute query: %s", sqlite3_errmsg(Database->Handle));
+		sqlite3_finalize(Stmt);
+		return false;
+	}
+
+	*Timestamp = (ErrorCode == SQLITE_ROW ? sqlite3_column_int(Stmt, 0) : 0);
+	sqlite3_finalize(Stmt);
+	return true;
+}
+
+static bool InsertPatch(TDatabase *Database, const char *FileName){
+	sqlite3_stmt *Stmt = NULL;
+	const char *Text = "INSERT INTO Patches (FileName, Timestamp) VALUES (?1, UNIXEPOCH())";
+	if(sqlite3_prepare_v2(Database->Handle, Text, -1, &Stmt, NULL) != SQLITE_OK
+	|| sqlite3_bind_text(Stmt, 1, FileName, -1, NULL)              != SQLITE_OK){
+		LOG_ERR("Failed to prepare query: %s", sqlite3_errmsg(Database->Handle));
+		sqlite3_finalize(Stmt);
+		return false;
+	}
+
+	if(sqlite3_step(Stmt) != SQLITE_DONE){
+		LOG_ERR("Failed to execute query: %s", sqlite3_errmsg(Database->Handle));
+		sqlite3_finalize(Stmt);
+		return false;
+	}
+
+	sqlite3_finalize(Stmt);
+	return true;
+}
+
+static bool ApplyDatabasePatches(TDatabase *Database, const char *DirName){
+	LOG("Looking for patches at \"%s\"...", DirName);
+
+	TransactionScope Tx("SchemaPatches");
+	if(!Tx.Begin(Database)){
+		return false;
+	}
+
+	DIR *PatchDir = opendir(DirName);
+	if(PatchDir == NULL && errno == ENOENT){
+		LOG("Directory \"%s\" not found, skipping...", DirName);
+		return true;
+	}
+
+	if(PatchDir == NULL){
+		LOG_ERR("Failed to open directory \"%s\": (%d) %s",
+				DirName, errno, strerrordesc_np(errno));
+		return false;
+	}
+
+	bool Abort = false;
+	DynamicArray<struct dirent> PatchList;
+	while(struct dirent *DirEntry = readdir(PatchDir)){
+		if(DirEntry->d_type != DT_REG || !StringEndsWithCI(DirEntry->d_name, ".sql")){
+			continue;
+		}
+
+		int PatchTimestamp;
+		if(!GetPatchTimestamp(Database, DirEntry->d_name, &PatchTimestamp)){
+			Abort = true;
+			break;
+		}
+
+		if(PatchTimestamp > 0){
+			char DateString[256];
+			StringBufFormatTime(DateString, "%Y-%m-%d", PatchTimestamp);
+			LOG("\"%s\": patch already applied on %s", DirEntry->d_name, DateString);
+		}else{
+			PatchList.Push(*DirEntry);
+		}
+	}
+
+	if(!Abort && !PatchList.Empty()){
+		std::sort(PatchList.begin(), PatchList.end(),
+			[](const struct dirent &A, const struct dirent &B) -> bool {
+				return strcmp(A.d_name, B.d_name) < 0;
+			});
+
+		for(const struct dirent &DirEntry: PatchList){
+			LOG("\"%s\": applying patch...", DirEntry.d_name);
+
+			char FilePath[4096];
+			StringBufFormat(FilePath, "%s/%s", DirName, DirEntry.d_name);
+			if(!ExecFile(Database, FilePath) || !InsertPatch(Database, DirEntry.d_name)){
+				Abort = true;
+				break;
+			}
+		}
+	}
+
+	closedir(PatchDir);
+	return !Abort && Tx.Commit();
+}
+
+static bool CheckDatabaseSchema(TDatabase *Database){
+	int ApplicationID, NumObjects;
+	if(!QueryInternal(Database, &ApplicationID, "PRAGMA application_id")
+	|| !QueryInternal(Database, &NumObjects,    "SELECT COUNT(*) FROM sqlite_master")){
+		return false;
+	}
+
+	// IMPORTANT(fusion): Only initialize the schema if the database has no
+	// application id and has no objects defined (tables, indexes, views, or
+	// triggers).
+	if(ApplicationID == 0 && NumObjects == 0){
+		if(!InitDatabaseSchema(Database)){
 			LOG_ERR("Failed to initialize database schema");
 			return false;
 		}
 
-		UserVersion = 1;
+		// NOTE(fusion): Refresh database information after initalizing schema.
+		if(!QueryInternal(Database, &ApplicationID, "PRAGMA application_id")
+		|| !QueryInternal(Database, &NumObjects,    "SELECT COUNT(*) FROM sqlite_master")){
+			return false;
+		}
 	}
 
-	if(!UpgradeDatabaseSchema(Database, UserVersion)){
-		LOG_ERR("Failed to upgrade database schema");
+	if(ApplicationID != SQLITE_APPLICATION_ID){
+		LOG_ERR("Application ID mismatch (expected %08X, got %08X)",
+				SQLITE_APPLICATION_ID, ApplicationID);
 		return false;
 	}
 
-	LOG("Database version: %d", UserVersion);
+	// IMPORTANT(fusion): After checking the application id, we want to apply
+	// patches before checking user version, just in case some migration needs
+	// to take place.
+	if(!ApplyDatabasePatches(Database, "sqlite/patches")){
+		LOG_ERR("Failed to apply database patches");
+		return false;
+	}
+
+	int UserVersion;
+	if(!QueryInternal(Database, &UserVersion, "PRAGMA user_version")){
+		return false;
+	}
+
+	if(UserVersion != SQLITE_USER_VERSION){
+		LOG_ERR("User Version mismatch (expected %d, got %d)",
+				SQLITE_USER_VERSION, UserVersion);
+		return false;
+	}
+
 	return true;
 }
 

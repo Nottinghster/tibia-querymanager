@@ -158,10 +158,13 @@ bool StringEq(const char *A, const char *B);
 bool StringEqCI(const char *A, const char *B);
 bool StringStartsWith(const char *String, const char *Prefix);
 bool StringStartsWithCI(const char *String, const char *Prefix);
+bool StringEndsWith(const char *String, const char *Suffix);
+bool StringEndsWithCI(const char *String, const char *Suffix);
 bool StringCopyN(char *Dest, int DestCapacity, const char *Src, int SrcLength);
 bool StringCopy(char *Dest, int DestCapacity, const char *Src);
 void StringCopyEllipsis(char *Dest, int DestCapacity, const char *Src);
 bool StringFormat(char *Dest, int DestCapacity, const char *Format, ...) ATTR_PRINTF(3, 4);
+bool StringFormatTime(char *Dest, int DestCapacity, const char *Format, int Timestamp);
 int UTF8SequenceSize(uint8 LeadingByte);
 bool UTF8IsTrailingByte(uint8 Byte);
 int UTF8EncodedSize(int Codepoint);
@@ -183,12 +186,14 @@ bool ReadConfig(const char *FileName, TConfig *Config);
 // IMPORTANT(fusion): These macros should only be used when `Dest` is a char array
 // to simplify the call to `StringCopy` where we'd use `sizeof(Dest)` to determine
 // the size of the destination anyways.
-#define StringBufFormat(Dest, ...)           StringFormat(Dest, sizeof(Dest), __VA_ARGS__)
-#define StringBufCopyEllipsis(Dest, Src)     StringCopyEllipsis(Dest, sizeof(Dest), Src);
 #define StringBufCopy(Dest, Src)             StringCopy(Dest, sizeof(Dest), Src)
 #define StringBufCopyN(Dest, Src, SrcLength) StringCopyN(Dest, sizeof(Dest), Src, SrcLength)
-#define ParseStringBuf(Dest, String)         ParseString(Dest, sizeof(Dest), String)
+#define StringBufCopyEllipsis(Dest, Src)     StringCopyEllipsis(Dest, sizeof(Dest), Src);
+#define StringBufFormat(Dest, ...)           StringFormat(Dest, sizeof(Dest), __VA_ARGS__)
+#define StringBufFormatTime(Dest, Format, Timestamp) \
+		StringFormatTime(Dest, sizeof(Dest), Format, Timestamp);
 #define ParseHexStringBuf(Dest, String)      ParseHexString(Dest, sizeof(Dest), String);
+#define ParseStringBuf(Dest, String)         ParseString(Dest, sizeof(Dest), String)
 
 // AtomicInt
 //==============================================================================

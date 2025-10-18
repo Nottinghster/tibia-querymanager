@@ -28,11 +28,9 @@ void LogAdd(const char *Prefix, const char *Format, ...){
 	}
 
 	if(Length > 0){
-		struct tm LocalTime = GetLocalTime(time(NULL));
-		fprintf(stdout, "%04d/%02d/%02d %02d:%02d:%02d [%s] %s\n",
-				LocalTime.tm_year + 1900, LocalTime.tm_mon + 1, LocalTime.tm_mday,
-				LocalTime.tm_hour, LocalTime.tm_min, LocalTime.tm_sec,
-				Prefix, Entry);
+		char TimeString[128];
+		StringBufFormatTime(TimeString, "%Y-%m-%d %H:%M:%S", (int)time(NULL));
+		fprintf(stdout, "%s [%s] %s\n", TimeString, Prefix, Entry);
 		fflush(stdout);
 	}
 }
@@ -55,11 +53,9 @@ void LogAddVerbose(const char *Prefix, const char *Function,
 	if(Length > 0){
 		(void)File;
 		(void)Line;
-		struct tm LocalTime = GetLocalTime(time(NULL));
-		fprintf(stdout, "%04d/%02d/%02d %02d:%02d:%02d [%s] %s: %s\n",
-				LocalTime.tm_year + 1900, LocalTime.tm_mon + 1, LocalTime.tm_mday,
-				LocalTime.tm_hour, LocalTime.tm_min, LocalTime.tm_sec,
-				Prefix, Function, Entry);
+		char TimeString[128];
+		StringBufFormatTime(TimeString, "%Y-%m-%d %H:%M:%S", (int)time(NULL));
+		fprintf(stdout, "%s [%s] %s: %s\n", TimeString, Prefix, Function, Entry);
 		fflush(stdout);
 	}
 }
@@ -152,26 +148,18 @@ bool StringEmpty(const char *String){
 
 bool StringEq(const char *A, const char *B){
 	int Index = 0;
-	while(true){
-		if(A[Index] != B[Index]){
-			return false;
-		}else if(A[Index] == 0){
-			return true;
-		}
+	while(A[Index] != 0 && A[Index] == B[Index]){
 		Index += 1;
 	}
+	return A[Index] == B[Index];
 }
 
 bool StringEqCI(const char *A, const char *B){
 	int Index = 0;
-	while(true){
-		if(tolower(A[Index]) != tolower(B[Index])){
-			return false;
-		}else if(A[Index] == 0){
-			return true;
-		}
+	while(A[Index] != 0 && tolower(A[Index]) == tolower(B[Index])){
 		Index += 1;
 	}
+	return tolower(A[Index]) == tolower(B[Index]);
 }
 
 bool StringStartsWith(const char *String, const char *Prefix){
@@ -194,6 +182,16 @@ bool StringStartsWithCI(const char *String, const char *Prefix){
 		Index += 1;
 	}
 	return true;
+}
+
+bool StringEndsWith(const char *String, const char *Suffix){
+	int SuffixOffset = ((int)strlen(String) - (int)strlen(Suffix));
+	return SuffixOffset >= 0 && StringEq(String + SuffixOffset, Suffix);
+}
+
+bool StringEndsWithCI(const char *String, const char *Suffix){
+	int SuffixOffset = ((int)strlen(String) - (int)strlen(Suffix));
+	return SuffixOffset >= 0 && StringEqCI(String + SuffixOffset, Suffix);
 }
 
 bool StringCopyN(char *Dest, int DestCapacity, const char *Src, int SrcLength){
@@ -239,6 +237,21 @@ bool StringFormat(char *Dest, int DestCapacity, const char *Format, ...){
 	int Written = vsnprintf(Dest, DestCapacity, Format, ap);
 	va_end(ap);
 	return Written >= 0 && Written < DestCapacity;
+}
+
+bool StringFormatTime(char *Dest, int DestCapacity, const char *Format, int Timestamp){
+	struct tm tm = GetLocalTime((int)Timestamp);
+	int Result = (int)strftime(Dest, DestCapacity, Format, &tm);
+
+	// NOTE(fusion): `strftime` will should return ZERO if it's unable to fit
+	// the result in the supplied buffer, which is annoying because ZERO may
+	// not represent a failure if the result is an empty string.
+	ASSERT(Result >= 0 && Result < DestCapacity);
+	if(Result == 0){
+		memset(Dest, 0, DestCapacity);
+	}
+
+	return Result != 0;
 }
 
 int UTF8SequenceSize(uint8 LeadingByte){

@@ -1093,7 +1093,7 @@ const char *PrepareQuery(TDatabase *Database, const char *Text){
 		Stmt->Text = strdup(Text);
 		ASSERT(Stmt->Text != NULL);
 
-#if 1 // DEBUG_STATEMENT_CACHE
+#if DEBUG_STATEMENT_CACHE
 		{
 			char Preview[30];
 			StringBufCopyEllipsis(Preview, Text);

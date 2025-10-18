@@ -29,6 +29,17 @@ CREATE COLLATION NOCASE (
 -- using them here. It might be a good idea for consistency, but it's not a hard
 -- requirement.
 
+-- NOTE(fusion): A table with schema information. It currently only contains the
+-- schema version which is checked at startup against `POSTGRESQL_SCHEMA_VERSION`,
+-- defined in `database_postgres.cc`. The query manager will only startup if the
+-- versions match.
+CREATE TABLE SchemaInfo (
+    Key TEXT NOT NULL COLLATE NOCASE,
+    Value TEXT NOT NULL,
+    PRIMARY KEY (Key)
+);
+INSERT INTO SchemaInfo (Key, Value) VALUES ('VERSION', '1');
+
 -- Primary Tables
 --==============================================================================
 CREATE TABLE Worlds (
@@ -279,18 +290,5 @@ CREATE TABLE OnlineCharacters (
     Profession TEXT NOT NULL,
     PRIMARY KEY (WorldID, Name)
 );
-
--- Schema Info
---==============================================================================
--- NOTE(fusion): The `SchemaInfo` table should hold information about the schema
--- and be used for consistency checks at startup. It currently only contains the
--- schema version, which I feel is the only value needed.
-CREATE TABLE SchemaInfo (
-    Key TEXT NOT NULL COLLATE NOCASE,
-    Value TEXT NOT NULL,
-    PRIMARY KEY (Key)
-);
-
-INSERT INTO SchemaInfo (Key, Value) VALUES ('VERSION', '1');
 
 COMMIT;
