@@ -476,7 +476,7 @@ static int GetResultByteA(PGresult *Result, int Row, int Col, uint8 *Buffer, int
 	return Size;
 }
 
-#if 1
+#if 0
 // NOTE(fusion): DO NOT REMOVE. It is currently not being used so it's switched
 // off to avoid compiler warnings.
 static int GetResultIPAddress(PGresult *Result, int Row, int Col){
@@ -1270,41 +1270,6 @@ TDatabase *DatabaseOpen(void){
 		DatabaseClose(Database);
 		return NULL;
 	}
-
-#if 0
-	{
-		// TODO(fusion): REMOVE. This is for testing query input/output, to make sure
-		// they're consitent across different formats (text/binary).
-		const char *Stmt = PrepareQuery(Database,
-				"SELECT NULL::BOOLEAN, NULL::INTEGER, NULL::TEXT, NULL::BYTEA,"
-					" NULL::INET, NULL::TIMESTAMP, NULL::INTERVAL");
-		ASSERT(Stmt != NULL);
-
-		for(int i = 0; i <= 1; i += 1)
-		for(int j = 0; j <= 1; j += 1){
-			LOG("TEST (%d, %d)", i, j);
-			ParamBuffer Params;
-			ParamBegin(&Params, 0, i);
-			PGresult *Result = PQexecPrepared(Database->Handle, Stmt, Params.NumParams,
-										Params.Values, Params.Lengths, Params.Formats, j);
-			AutoResultClear ResultGuard(Result);
-			if(PQresultStatus(Result) == PGRES_TUPLES_OK){
-				LOG("0: %d", GetResultBool(Result, 0, 0));
-				LOG("1: %d", GetResultInt(Result, 0, 1));
-				LOG("2: %s", GetResultText(Result, 0, 2));
-				LOG("3: %d", GetResultByteA(Result, 0, 3, NULL, 0));
-				LOG("4: %d", GetResultIPAddress(Result, 0, 4));
-				LOG("5: %d", GetResultTimestamp(Result, 0, 5));
-				LOG("6: %d", GetResultInterval(Result, 0, 6));
-			}else{
-				LOG_ERR("Failed to execute query: %s", PQerrorMessage(Database->Handle));
-			}
-		}
-
-		DatabaseClose(Database);
-		return NULL;
-	}
-#endif
 
 	return Database;
 }

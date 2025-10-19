@@ -22,14 +22,14 @@ PostgreSQL.SSLMode              = ""
 PostgreSQL.SSLRootCert          = ""
 PostgreSQL.MaxCachedStatements  = 100
 
-# MySQL/MariaDB Config
-MySQL.Host                      = "localhost"
-MySQL.Port                      = "3306"
-MySQL.DBName                    = "tibia"
-MySQL.User                      = "tibia"
-MySQL.Password                  = ""
-MySQL.UnixSocket                = ""
-MySQL.MaxCachedStatements       = 100
+# MariaDB Config
+MariaDB.Host                    = "localhost"
+MariaDB.Port                    = "3306"
+MariaDB.DBName                  = "tibia"
+MariaDB.User                    = "tibia"
+MariaDB.Password                = ""
+MariaDB.UnixSocket              = ""
+MariaDB.MaxCachedStatements     = 100
 
 # Connection Config
 QueryManagerPort                = 7173

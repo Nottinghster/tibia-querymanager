@@ -26,11 +26,11 @@ ifeq ($(DATABASE), sqlite)
   CFLAGS += -DDATABASE_SQLITE=1
 else ifeq ($(DATABASE), postgres)
   DATABASEOBJ = $(BUILDDIR)/database_postgres.obj
-  CFLAGS += -DDATABASE_POSTGRESQL=1
+  CFLAGS += -DDATABASE_POSTGRESQL=1 -I/usr/include/postgresql
   LFLAGS += -lpq
 else ifeq ($(DATABASE), mariadb)
-  DATABASEOBJ = $(BUILDDIR)/database_mysql.obj
-  CFLAGS += -DDATABASE_MYSQL=1 -DDATABASE_MARIADB=1
+  DATABASEOBJ = $(BUILDDIR)/database_mariadb.obj
+  CFLAGS += -DDATABASE_MARIADB=1 -I/usr/include/mariadb
   LFLAGS += -lmariadb
 else
   $(error Unsupported DATABASE: `$(DATABASE)`. Valid options are `sqlite`, `postgres`, or `mariadb`)
@@ -68,7 +68,7 @@ $(BUILDDIR)/database_postgres.obj: $(SRCDIR)/database_postgres.cc $(SRCDIR)/quer
 	@mkdir -p $(@D)
 	$(CXX) -c $(CXXFLAGS) -o $@ $<
 
-$(BUILDDIR)/database_mysql.obj: $(SRCDIR)/database_mysql.cc $(SRCDIR)/querymanager.hh
+$(BUILDDIR)/database_mariadb.obj: $(SRCDIR)/database_mariadb.cc $(SRCDIR)/querymanager.hh
 	@mkdir -p $(@D)
 	$(CXX) -c $(CXXFLAGS) -o $@ $<
 

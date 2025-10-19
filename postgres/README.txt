@@ -93,9 +93,13 @@ psql -U postgres tibia
 2 - Set default privileges. Newly created databases may have some default PUBLIC
 privileges that we'll want to revoke to make sure the set of users that are able
 to connect is tighly controlled. Then, for users that are able to connect, we
-want to give default access privileges to tables.
+want to grant default access privileges on tables, while revoking the ability to
+create or rename objects (tables, views, sequences, indexes). Note that a schema
+in PostgreSQL is just a namespace for objects and new databases should have the
+*public* schema created by default.
 ```
 REVOKE ALL ON DATABASE tibia FROM PUBLIC;
+REVOKE CREATE ON SCHEMA public FROM PUBLIC;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public
   GRANT SELECT, INSERT, UPDATE, DELETE
     ON TABLES TO PUBLIC;

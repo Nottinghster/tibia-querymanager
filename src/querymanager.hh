@@ -76,9 +76,9 @@ typedef size_t usize;
 		TRAP();																	\
 	}while(0)
 
-#if (DATABASE_SQLITE + DATABASE_POSTGRESQL + DATABASE_MYSQL) == 0
+#if (DATABASE_SQLITE + DATABASE_POSTGRESQL + DATABASE_MARIADB) == 0
 #	error "No database system defined."
-#elif (DATABASE_SQLITE + DATABASE_POSTGRESQL + DATABASE_MYSQL) > 1
+#elif (DATABASE_SQLITE + DATABASE_POSTGRESQL + DATABASE_MARIADB) > 1
 #	error "Multiple database systems defined."
 #endif
 
@@ -86,8 +86,8 @@ typedef size_t usize;
 #	define DATABASE_SYSTEM_NAME "SQLite"
 #elif DATABASE_POSTGRESQL
 #	define DATABASE_SYSTEM_NAME "PostgreSQL"
-#elif DATABASE_MYSQL
-#	define DATABASE_SYSTEM_NAME "MySQL"
+#elif DATABASE_MARIADB
+#	define DATABASE_SYSTEM_NAME "MariaDB"
 #endif
 
 struct TConfig{
@@ -117,7 +117,7 @@ struct TConfig{
 		int  MaxCachedStatements;
 	} PostgreSQL;
 
-	// MySQL/MariaDB Config
+	// MariaDB Config
 	struct{
 		char Host[100];
 		char Port[30];
@@ -126,7 +126,7 @@ struct TConfig{
 		char Password[30];
 		char UnixSocket[100];
 		int  MaxCachedStatements;
-	} MySQL;
+	} MariaDB;
 
 	// Connection Config
 	int  QueryManagerPort;

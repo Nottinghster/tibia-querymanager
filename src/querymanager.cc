@@ -704,20 +704,20 @@ bool ReadConfig(const char *FileName, TConfig *Config){
 			ParseStringBuf(Config->PostgreSQL.SSLRootCert, Val);
 		}else if(StringEqCI(Key, "PostgreSQL.MaxCachedStatements")){
 			ParseInteger(&Config->PostgreSQL.MaxCachedStatements, Val);
-		}else if(StringEqCI(Key, "MySQL.Host")){
-			ParseStringBuf(Config->MySQL.Host, Val);
-		}else if(StringEqCI(Key, "MySQL.Port")){
-			ParseStringBuf(Config->MySQL.Port, Val);
-		}else if(StringEqCI(Key, "MySQL.DBName")){
-			ParseStringBuf(Config->MySQL.DBName, Val);
-		}else if(StringEqCI(Key, "MySQL.User")){
-			ParseStringBuf(Config->MySQL.User, Val);
-		}else if(StringEqCI(Key, "MySQL.Password")){
-			ParseStringBuf(Config->MySQL.Password, Val);
-		}else if(StringEqCI(Key, "MySQL.UnixSocket")){
-			ParseStringBuf(Config->MySQL.UnixSocket, Val);
-		}else if(StringEqCI(Key, "MySQL.MaxCachedStatements")){
-			ParseInteger(&Config->MySQL.MaxCachedStatements, Val);
+		}else if(StringEqCI(Key, "MariaDB.Host")){
+			ParseStringBuf(Config->MariaDB.Host, Val);
+		}else if(StringEqCI(Key, "MariaDB.Port")){
+			ParseStringBuf(Config->MariaDB.Port, Val);
+		}else if(StringEqCI(Key, "MariaDB.DBName")){
+			ParseStringBuf(Config->MariaDB.DBName, Val);
+		}else if(StringEqCI(Key, "MariaDB.User")){
+			ParseStringBuf(Config->MariaDB.User, Val);
+		}else if(StringEqCI(Key, "MariaDB.Password")){
+			ParseStringBuf(Config->MariaDB.Password, Val);
+		}else if(StringEqCI(Key, "MariaDB.UnixSocket")){
+			ParseStringBuf(Config->MariaDB.UnixSocket, Val);
+		}else if(StringEqCI(Key, "MariaDB.MaxCachedStatements")){
+			ParseInteger(&Config->MariaDB.MaxCachedStatements, Val);
 		}else if(StringEqCI(Key, "QueryManagerPort")){
 			ParseInteger(&Config->QueryManagerPort, Val);
 		}else if(StringEqCI(Key, "QueryManagerPassword")){
@@ -791,14 +791,14 @@ int main(int argc, const char **argv){
 	StringBufCopy(g_Config.PostgreSQL.SSLRootCert,     "");
 	g_Config.PostgreSQL.MaxCachedStatements = 100;
 
-	// MySQL/MariaDB Config
-	StringBufCopy(g_Config.MySQL.Host,       "localhost");
-	StringBufCopy(g_Config.MySQL.Port,       "3306");
-	StringBufCopy(g_Config.MySQL.DBName,     "tibia");
-	StringBufCopy(g_Config.MySQL.User,       "tibia");
-	StringBufCopy(g_Config.MySQL.Password,   "");
-	StringBufCopy(g_Config.MySQL.UnixSocket, "");
-	g_Config.MySQL.MaxCachedStatements = 100;
+	// MariaDB Config
+	StringBufCopy(g_Config.MariaDB.Host,       "localhost");
+	StringBufCopy(g_Config.MariaDB.Port,       "3306");
+	StringBufCopy(g_Config.MariaDB.DBName,     "tibia");
+	StringBufCopy(g_Config.MariaDB.User,       "tibia");
+	StringBufCopy(g_Config.MariaDB.Password,   "");
+	StringBufCopy(g_Config.MariaDB.UnixSocket, "");
+	g_Config.MariaDB.MaxCachedStatements = 100;
 
 	// Connection Config
 	g_Config.QueryManagerPort = 7174;
@@ -830,13 +830,13 @@ int main(int argc, const char **argv){
 	LOG("PostgreSQL sslmode:               \"%s\"", g_Config.PostgreSQL.SSLMode);
 	LOG("PostgreSQL sslrootcert:           \"%s\"", g_Config.PostgreSQL.SSLRootCert);
 	LOG("PostgreSQL max cached statements: %d",     g_Config.PostgreSQL.MaxCachedStatements);
-#elif DATABASE_MYSQL
-	LOG("MySQL host:                       \"%s\"", g_Config.MySQL.Host);
-	LOG("MySQL port:                       \"%s\"", g_Config.MySQL.Port);
-	LOG("MySQL dbname:                     \"%s\"", g_Config.MySQL.DBName);
-	LOG("MySQL user:                       \"%s\"", g_Config.MySQL.User);
-	LOG("MySQL unix socket:                \"%s\"", g_Config.MySQL.UnixSocket);
-	LOG("MySQL max cached statements:      %d",     g_Config.MySQL.MaxCachedStatements);
+#elif DATABASE_MARIADB
+	LOG("MariaDB host:                     \"%s\"", g_Config.MariaDB.Host);
+	LOG("MariaDB port:                     \"%s\"", g_Config.MariaDB.Port);
+	LOG("MariaDB dbname:                   \"%s\"", g_Config.MariaDB.DBName);
+	LOG("MariaDB user:                     \"%s\"", g_Config.MariaDB.User);
+	LOG("MariaDB unix socket:              \"%s\"", g_Config.MariaDB.UnixSocket);
+	LOG("MariaDB max cached statements:    %d",     g_Config.MariaDB.MaxCachedStatements);
 #endif
 	LOG("Query manager port:               %d",     g_Config.QueryManagerPort);
 	LOG("Query worker threads:             %d",     g_Config.QueryWorkerThreads);
