@@ -884,19 +884,22 @@ struct TCharacterLoginData{
 	int AccountID;
 	char Name[30];
 	int Sex;
-	char Guild[30];
-	char Rank[30];
-	char Title[30];
 	bool Deleted;
 };
 
+struct TCharacterGuildData{
+	int GuildID;
+	int Rank;
+	char GuildName[30];
+	char RankName[30];
+	char Title[30];
+};
+
 struct TCharacterProfile{
+	int CharacterID;
 	char Name[30];
 	char World[30];
 	int Sex;
-	char Guild[30];
-	char Rank[30];
-	char Title[30];
 	int Level;
 	char Profession[30];
 	char Residence[30];
@@ -1047,6 +1050,9 @@ bool GetWorldInvitation(TDatabase *Database, int WorldID, int CharacterID, bool 
 bool InsertLoginAttempt(TDatabase *Database, int AccountID, int IPAddress, bool Failed);
 bool GetAccountFailedLoginAttempts(TDatabase *Database, int AccountID, int TimeWindow, int *FailedAttempts);
 bool GetIPAddressFailedLoginAttempts(TDatabase *Database, int IPAddress, int TimeWindow, int *FailedAttempts);
+
+// NOTE(fusion): Guild Tables
+bool GetCharacterGuildData(TDatabase *Database, int CharacterID, TCharacterGuildData *GuildData);
 
 // NOTE(fusion): House Tables
 bool FinishHouseAuctions(TDatabase *Database, int WorldID, DynamicArray<THouseAuction> *Auctions);

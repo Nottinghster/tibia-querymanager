@@ -809,7 +809,7 @@ int main(int argc, const char **argv){
 	g_Config.MaxConnections = 25;
 	g_Config.MaxConnectionIdleTime = 60 * 5; // seconds
 
-	LOG("Tibia Query Manager v0.2 (%s)", DATABASE_SYSTEM_NAME);
+	LOG("Tibia Query Manager v0.3 (%s)", DATABASE_SYSTEM_NAME);
 	if(!ReadConfig("config.cfg", &g_Config)){
 		return EXIT_FAILURE;
 	}

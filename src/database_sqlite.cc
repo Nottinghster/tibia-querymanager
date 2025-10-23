@@ -1022,8 +1022,7 @@ bool GetCharacterID(TDatabase *Database, int WorldID, const char *CharacterName,
 bool GetCharacterLoginData(TDatabase *Database, const char *CharacterName, TCharacterLoginData *Character){
 	ASSERT(Database != NULL && CharacterName != NULL && Character != NULL);
 	sqlite3_stmt *Stmt = PrepareQuery(Database,
-			"SELECT WorldID, CharacterID, AccountID, Name,"
-				" Sex, Guild, Rank, Title, Deleted"
+			"SELECT WorldID, CharacterID, AccountID, Name, Sex, Deleted"
 			" FROM Characters WHERE Name = ?1");
 	if(Stmt == NULL){
 		LOG_ERR("Failed to prepare query");
@@ -1049,10 +1048,7 @@ bool GetCharacterLoginData(TDatabase *Database, const char *CharacterName, TChar
 		Character->AccountID = sqlite3_column_int(Stmt, 2);
 		StringBufCopy(Character->Name, (const char*)sqlite3_column_text(Stmt, 3));
 		Character->Sex = sqlite3_column_int(Stmt, 4);
-		StringBufCopy(Character->Guild, (const char*)sqlite3_column_text(Stmt, 5));
-		StringBufCopy(Character->Rank, (const char*)sqlite3_column_text(Stmt, 6));
-		StringBufCopy(Character->Title, (const char*)sqlite3_column_text(Stmt, 7));
-		Character->Deleted = (sqlite3_column_int(Stmt, 8) != 0);
+		Character->Deleted = (sqlite3_column_int(Stmt, 5) != 0);
 	}
 
 	return true;
@@ -1061,7 +1057,7 @@ bool GetCharacterLoginData(TDatabase *Database, const char *CharacterName, TChar
 bool GetCharacterProfile(TDatabase *Database, const char *CharacterName, TCharacterProfile *Character){
 	ASSERT(Database != NULL && CharacterName != NULL && Character != NULL);
 	sqlite3_stmt *Stmt = PrepareQuery(Database,
-			"SELECT C.Name, W.Name, C.Sex, C.Guild, C.Rank, C.Title, C.Level,"
+			"SELECT C.CharacterID, C.Name, W.Name, C.Sex, C.Level,"
 				" C.Profession, C.Residence, C.LastLoginTime, C.IsOnline,"
 				" C.Deleted, MAX(A.PremiumEnd - UNIXEPOCH(), 0)"
 			" FROM Characters AS C"
@@ -1069,7 +1065,7 @@ bool GetCharacterProfile(TDatabase *Database, const char *CharacterName, TCharac
 			" LEFT JOIN Accounts AS A ON A.AccountID = C.AccountID"
 			" LEFT JOIN CharacterRights AS R"
 				" ON R.CharacterID = C.CharacterID"
-				" AND R.Name = 'NO_STATISTICS'"
+					" AND R.Name = 'NO_STATISTICS'"
 			" WHERE C.Name = ?1 AND R.Name IS NULL");
 	if(Stmt == NULL){
 		LOG_ERR("Failed to prepare query");
@@ -1090,19 +1086,17 @@ bool GetCharacterProfile(TDatabase *Database, const char *CharacterName, TCharac
 
 	memset(Character, 0, sizeof(TCharacterProfile));
 	if(ErrorCode == SQLITE_ROW){
-		StringBufCopy(Character->Name, (const char*)sqlite3_column_text(Stmt, 0));
-		StringBufCopy(Character->World, (const char*)sqlite3_column_text(Stmt, 1));
-		Character->Sex = sqlite3_column_int(Stmt, 2);
-		StringBufCopy(Character->Guild, (const char*)sqlite3_column_text(Stmt, 3));
-		StringBufCopy(Character->Rank, (const char*)sqlite3_column_text(Stmt, 4));
-		StringBufCopy(Character->Title, (const char*)sqlite3_column_text(Stmt, 5));
-		Character->Level = sqlite3_column_int(Stmt, 6);
-		StringBufCopy(Character->Profession, (const char*)sqlite3_column_text(Stmt, 7));
-		StringBufCopy(Character->Residence, (const char*)sqlite3_column_text(Stmt, 8));
-		Character->LastLogin = sqlite3_column_int(Stmt, 9);
-		Character->Online = (sqlite3_column_int(Stmt, 10) != 0);
-		Character->Deleted = (sqlite3_column_int(Stmt, 11) != 0);
-		Character->PremiumDays = RoundSecondsToDays(sqlite3_column_int(Stmt, 12));
+		Character->CharacterID = sqlite3_column_int(Stmt, 0);
+		StringBufCopy(Character->Name, (const char*)sqlite3_column_text(Stmt, 1));
+		StringBufCopy(Character->World, (const char*)sqlite3_column_text(Stmt, 2));
+		Character->Sex = sqlite3_column_int(Stmt, 3);
+		Character->Level = sqlite3_column_int(Stmt, 4);
+		StringBufCopy(Character->Profession, (const char*)sqlite3_column_text(Stmt, 5));
+		StringBufCopy(Character->Residence, (const char*)sqlite3_column_text(Stmt, 6));
+		Character->LastLogin = sqlite3_column_int(Stmt, 7);
+		Character->Online = (sqlite3_column_int(Stmt, 8) != 0);
+		Character->Deleted = (sqlite3_column_int(Stmt, 9) != 0);
+		Character->PremiumDays = RoundSecondsToDays(sqlite3_column_int(Stmt, 10));
 	}
 
 	return true;
@@ -1168,8 +1162,8 @@ bool GetGuildLeaderStatus(TDatabase *Database, int WorldID, int CharacterID, boo
 	ASSERT(Database != NULL && GuildLeader != NULL);
 	// NOTE(fusion): Same as `DecrementIsOnline`.
 	sqlite3_stmt *Stmt = PrepareQuery(Database,
-			"SELECT Guild, Rank FROM Characters"
-			" WHERE WorldID = ?1 AND CharacterID = ?2");
+			"SELECT 1 FROM Guilds"
+			" WHERE WorldID = ?1 AND LeaderID = ?2");
 	if(Stmt == NULL){
 		LOG_ERR("Failed to prepare query");
 		return false;
@@ -1188,15 +1182,7 @@ bool GetGuildLeaderStatus(TDatabase *Database, int WorldID, int CharacterID, boo
 		return false;
 	}
 
-	*GuildLeader = false;
-	if(ErrorCode == SQLITE_ROW){
-		const char *Guild = (const char*)sqlite3_column_text(Stmt, 0);
-		const char *Rank = (const char*)sqlite3_column_text(Stmt, 1);
-		if(Guild != NULL && !StringEmpty(Guild) && Rank != NULL && StringEqCI(Rank, "Leader")){
-			*GuildLeader = true;
-		}
-	}
-
+	*GuildLeader = (ErrorCode == SQLITE_ROW);
 	return true;
 }
 
@@ -1589,6 +1575,47 @@ bool GetIPAddressFailedLoginAttempts(TDatabase *Database, int IPAddress, int Tim
 	}
 
 	*FailedAttempts = sqlite3_column_int(Stmt, 0);
+	return true;
+}
+
+// Guild Tables
+//==============================================================================
+bool GetCharacterGuildData(TDatabase *Database, int CharacterID, TCharacterGuildData *GuildData){
+	ASSERT(Database != NULL && GuildData != NULL);
+	sqlite3_stmt *Stmt = PrepareQuery(Database,
+			"SELECT G.GuildID, R.Rank, G.Name, R.Name, M.Title"
+			" FROM Characters AS C"
+			" LEFT JOIN GuildMembers AS M ON M.CharacterID = C.CharacterID"
+			" LEFT JOIN Guilds AS G ON G.GuildID = M.GuildID"
+			" LEFT JOIN GuildRanks AS R"
+				" ON R.GuildID = M.GuildID AND R.Rank = M.Rank"
+			" WHERE C.CharacterID = ?1");
+	if(Stmt == NULL){
+		LOG_ERR("Failed to prepare query");
+		return false;
+	}
+
+	AutoStmtReset StmtReset(Stmt);
+	if(sqlite3_bind_int(Stmt, 1, CharacterID) != SQLITE_OK){
+		LOG_ERR("Failed to bind CharacterID: %s", sqlite3_errmsg(Database->Handle));
+		return false;
+	}
+
+	int ErrorCode = sqlite3_step(Stmt);
+	if(ErrorCode != SQLITE_ROW && ErrorCode != SQLITE_DONE){
+		LOG_ERR("Failed to execute query: %s", sqlite3_errmsg(Database->Handle));
+		return false;
+	}
+
+	memset(GuildData, 0, sizeof(TCharacterGuildData));
+	if(ErrorCode == SQLITE_ROW){
+		GuildData->GuildID = sqlite3_column_int(Stmt, 0);
+		GuildData->Rank = sqlite3_column_int(Stmt, 1);
+		StringBufCopy(GuildData->GuildName, (const char*)sqlite3_column_text(Stmt, 2));
+		StringBufCopy(GuildData->RankName, (const char*)sqlite3_column_text(Stmt, 3));
+		StringBufCopy(GuildData->Title, (const char*)sqlite3_column_text(Stmt, 4));
+	}
+
 	return true;
 }
 

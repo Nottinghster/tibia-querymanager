@@ -57,9 +57,6 @@ CREATE TABLE Characters (
 	AccountID INTEGER NOT NULL,
 	Name TEXT NOT NULL COLLATE NOCASE,
 	Sex INTEGER NOT NULL,
-	Guild TEXT NOT NULL COLLATE NOCASE DEFAULT '',
-	Rank TEXT NOT NULL COLLATE NOCASE DEFAULT '',
-	Title TEXT NOT NULL DEFAULT '',
 	Level INTEGER NOT NULL DEFAULT 0,
 	Profession TEXT NOT NULL DEFAULT '',
 	Residence TEXT NOT NULL DEFAULT '',
@@ -72,7 +69,6 @@ CREATE TABLE Characters (
 );
 CREATE INDEX CharactersWorldIndex   ON Characters(WorldID, IsOnline);
 CREATE INDEX CharactersAccountIndex ON Characters(AccountID, IsOnline);
-CREATE INDEX CharactersGuildIndex   ON Characters(Guild, Rank);
 
 /*
 -- TODO(fusion): Have group rights instead of adding individual rights to characters?
@@ -122,6 +118,46 @@ CREATE TABLE LoginAttempts (
 );
 CREATE INDEX LoginAttemptsAccountIndex ON LoginAttempts(AccountID, Timestamp);
 CREATE INDEX LoginAttemptsAddressIndex ON LoginAttempts(IPAddress, Timestamp);
+
+-- Guild Tables
+--==============================================================================
+CREATE TABLE Guilds (
+	WorldID INTEGER NOT NULL,
+	GuildID INTEGER NOT NULL,
+	Name TEXT NOT NULL COLLATE NOCASE,
+	LeaderID INTEGER NOT NULL,
+	Created INTEGER NOT NULL,
+	PRIMARY KEY (GuildID),
+	UNIQUE (Name),
+	UNIQUE (LeaderID)
+);
+
+CREATE TABLE GuildRanks (
+	GuildID INTEGER NOT NULL,
+	Rank INTEGER NOT NULL,
+	Name TEXT NOT NULL,
+	PRIMARY KEY (GuildID, Rank)
+);
+
+CREATE TABLE GuildMembers (
+	GuildID INTEGER NOT NULL,
+	CharacterID INTEGER NOT NULL,
+	Rank INTEGER NOT NULL,
+	Title TEXT NOT NULL,
+	Joined INTEGER NOT NULL,
+	PRIMARY KEY (CharacterID)
+);
+CREATE INDEX GuildMembersGuildIndex ON GuildMembers(GuildID, Rank);
+
+CREATE TABLE GuildInvites (
+	GuildID INTEGER NOT NULL,
+	CharacterID INTEGER NOT NULL,
+	RecruiterID INTEGER NOT NULL,
+	Timestamp INTEGER NOT NULL,
+	PRIMARY KEY (GuildID, CharacterID)
+);
+CREATE INDEX GuildInvitesCharacterIndex ON GuildInvites(CharacterID);
+CREATE INDEX GuildInvitesRecruiterIndex ON GuildInvites(RecruiterID);
 
 -- House Tables
 --==============================================================================

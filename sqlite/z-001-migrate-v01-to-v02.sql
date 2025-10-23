@@ -2,10 +2,10 @@
 -- must be manually executed as `sqlite3 -bail -echo tibia.db < migration.sql`
 -- because the original schema didn't have a `Patches` table which is necessary
 -- with the new automatic patching system. Future migration scripts can be placed
--- in `patches/` for automatic execution but not this one, unfortunately.
+-- in `patches/` for automatic execution but not this one, unfortunately. For
+-- more details see `sqlite/README.txt`.
 --  These changes are already present in the latest `schema.sql`, so trying to
--- apply it to a newly created database will result in errors. For more details
--- see `sqlite/README.txt`.
+-- apply them to a newly created database will result in errors.
 --==============================================================================
 
 BEGIN;

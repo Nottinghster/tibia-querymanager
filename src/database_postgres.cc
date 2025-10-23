@@ -1771,8 +1771,7 @@ bool GetCharacterID(TDatabase *Database, int WorldID, const char *CharacterName,
 bool GetCharacterLoginData(TDatabase *Database, const char *CharacterName, TCharacterLoginData *Character){
 	ASSERT(Database != NULL && CharacterName != NULL && Character != NULL);
 	const char *Stmt = PrepareQuery(Database,
-			"SELECT WorldID, CharacterID, AccountID, Name,"
-				" Sex, Guild, Rank, Title, Deleted"
+			"SELECT WorldID, CharacterID, AccountID, Name, Sex, Deleted"
 			" FROM Characters WHERE Name = $1::TEXT");
 	if(Stmt == NULL){
 		LOG_ERR("Failed to prepare query");
@@ -1797,10 +1796,7 @@ bool GetCharacterLoginData(TDatabase *Database, const char *CharacterName, TChar
 		Character->AccountID = GetResultInt(Result, 0, 2);
 		StringBufCopy(Character->Name, GetResultText(Result, 0, 3));
 		Character->Sex = GetResultInt(Result, 0, 4);
-		StringBufCopy(Character->Guild, GetResultText(Result, 0, 5));
-		StringBufCopy(Character->Rank, GetResultText(Result, 0, 6));
-		StringBufCopy(Character->Title, GetResultText(Result, 0, 7));
-		Character->Deleted = GetResultBool(Result, 0, 8);
+		Character->Deleted = GetResultBool(Result, 0, 5);
 	}
 
 	return true;
@@ -1809,7 +1805,7 @@ bool GetCharacterLoginData(TDatabase *Database, const char *CharacterName, TChar
 bool GetCharacterProfile(TDatabase *Database, const char *CharacterName, TCharacterProfile *Character){
 	ASSERT(Database != NULL && CharacterName != NULL && Character != NULL);
 	const char *Stmt = PrepareQuery(Database,
-			"SELECT C.Name, W.Name, C.Sex, C.Guild, C.Rank, C.Title, C.Level,"
+			"SELECT C.CharacterID, C.Name, W.Name, C.Sex, C.Level,"
 				" C.Profession, C.Residence, C.LastLoginTime, C.IsOnline,"
 				" C.Deleted, GREATEST(A.PremiumEnd - CURRENT_TIMESTAMP, '0')"
 			" FROM Characters AS C"
@@ -1817,7 +1813,7 @@ bool GetCharacterProfile(TDatabase *Database, const char *CharacterName, TCharac
 			" LEFT JOIN Accounts AS A ON A.AccountID = C.AccountID"
 			" LEFT JOIN CharacterRights AS R"
 				" ON R.CharacterID = C.CharacterID"
-				" AND R.Name = 'NO_STATISTICS'"
+					" AND R.Name = 'NO_STATISTICS'"
 			" WHERE C.Name = $1::TEXT AND R.Name IS NULL");
 	if(Stmt == NULL){
 		LOG_ERR("Failed to prepare query");
@@ -1837,19 +1833,17 @@ bool GetCharacterProfile(TDatabase *Database, const char *CharacterName, TCharac
 
 	memset(Character, 0, sizeof(TCharacterProfile));
 	if(PQntuples(Result) > 0){
-		StringBufCopy(Character->Name, GetResultText(Result, 0, 0));
-		StringBufCopy(Character->World, GetResultText(Result, 0, 1));
-		Character->Sex = GetResultInt(Result, 0, 2);
-		StringBufCopy(Character->Guild, GetResultText(Result, 0, 3));
-		StringBufCopy(Character->Rank, GetResultText(Result, 0, 4));
-		StringBufCopy(Character->Title, GetResultText(Result, 0, 5));
-		Character->Level = GetResultInt(Result, 0, 6);
-		StringBufCopy(Character->Profession, GetResultText(Result, 0, 7));
-		StringBufCopy(Character->Residence, GetResultText(Result, 0, 8));
-		Character->LastLogin = GetResultTimestamp(Result, 0, 9);
-		Character->Online = GetResultBool(Result, 0, 10);
-		Character->Deleted = GetResultBool(Result, 0, 11);
-		Character->PremiumDays = RoundSecondsToDays(GetResultInterval(Result, 0, 12));
+		Character->CharacterID = GetResultInt(Result, 0, 0);
+		StringBufCopy(Character->Name, GetResultText(Result, 0, 1));
+		StringBufCopy(Character->World, GetResultText(Result, 0, 2));
+		Character->Sex = GetResultInt(Result, 0, 3);
+		Character->Level = GetResultInt(Result, 0, 4);
+		StringBufCopy(Character->Profession, GetResultText(Result, 0, 5));
+		StringBufCopy(Character->Residence, GetResultText(Result, 0, 6));
+		Character->LastLogin = GetResultTimestamp(Result, 0, 7);
+		Character->Online = GetResultBool(Result, 0, 8);
+		Character->Deleted = GetResultBool(Result, 0, 9);
+		Character->PremiumDays = RoundSecondsToDays(GetResultInterval(Result, 0, 10));
 	}
 
 	return true;
@@ -1915,8 +1909,8 @@ bool GetGuildLeaderStatus(TDatabase *Database, int WorldID, int CharacterID, boo
 	ASSERT(Database != NULL && GuildLeader != NULL);
 	// NOTE(fusion): Same as `DecrementIsOnline`.
 	const char *Stmt = PrepareQuery(Database,
-			"SELECT Guild, Rank FROM Characters"
-			" WHERE WorldID = $1::INTEGER AND CharacterID = $2::INTEGER");
+			"SELECT 1 FROM Guilds"
+			" WHERE WorldID = $1::INTEGER AND LeaderID = $2::INTEGER");
 	if(Stmt == NULL){
 		LOG_ERR("Failed to prepare query");
 		return false;
@@ -1934,16 +1928,8 @@ bool GetGuildLeaderStatus(TDatabase *Database, int WorldID, int CharacterID, boo
 		return false;
 	}
 
-	*GuildLeader = false;
-	if(PQntuples(Result) > 0){
-		const char *Guild = GetResultText(Result, 0, 0);
-		const char *Rank = GetResultText(Result, 0, 1);
-		if(Guild != NULL && !StringEmpty(Guild) && Rank != NULL && StringEqCI(Rank, "Leader")){
-			*GuildLeader = true;
-		}
-	}
-
-	return false;
+	*GuildLeader = (PQntuples(Result) > 0);
+	return true;
 }
 
 bool IncrementIsOnline(TDatabase *Database, int WorldID, int CharacterID){
@@ -2338,6 +2324,46 @@ bool GetIPAddressFailedLoginAttempts(TDatabase *Database, int IPAddress, int Tim
 	}
 
 	*FailedAttempts = (PQntuples(Result) > 0 ? GetResultInt(Result, 0, 0) : 0);
+	return true;
+}
+
+// Guild Tables
+//==============================================================================
+bool GetCharacterGuildData(TDatabase *Database, int CharacterID, TCharacterGuildData *GuildData){
+	ASSERT(Database != NULL && GuildData != NULL);
+	const char *Stmt = PrepareQuery(Database,
+			"SELECT G.GuildID, R.Rank, G.Name, R.Name, M.Title"
+			" FROM Characters AS C"
+			" LEFT JOIN GuildMembers AS M ON M.CharacterID = C.CharacterID"
+			" LEFT JOIN Guilds AS G ON G.GuildID = M.GuildID"
+			" LEFT JOIN GuildRanks AS R"
+				" ON R.GuildID = M.GuildID AND R.Rank = M.Rank"
+			" WHERE C.CharacterID = $1::INTEGER");
+	if(Stmt == NULL){
+		LOG_ERR("Failed to prepare query");
+		return false;
+	}
+
+	ParamBuffer Params = {};
+	ParamBegin(&Params, 1, 1);
+	ParamInt(&Params, CharacterID);
+	PGresult *Result = PQexecPrepared(Database->Handle, Stmt, Params.NumParams,
+							Params.Values, Params.Lengths, Params.Formats, 1);
+	AutoResultClear ResultGuard(Result);
+	if(PQresultStatus(Result) != PGRES_TUPLES_OK){
+		LOG_ERR("Failed to execute query: %s", PQerrorMessage(Database->Handle));
+		return false;
+	}
+
+	memset(GuildData, 0, sizeof(TCharacterGuildData));
+	if(PQntuples(Result) > 0){
+		GuildData->GuildID = GetResultInt(Result, 0, 0);
+		GuildData->Rank = GetResultInt(Result, 0, 1);
+		StringBufCopy(GuildData->GuildName, GetResultText(Result, 0, 2));
+		StringBufCopy(GuildData->RankName, GetResultText(Result, 0, 3));
+		StringBufCopy(GuildData->Title, GetResultText(Result, 0, 4));
+	}
+
 	return true;
 }
 

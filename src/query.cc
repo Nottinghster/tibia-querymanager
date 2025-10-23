@@ -679,6 +679,9 @@ static void LoginGameTx(TDatabase *Database, TQuery *Query,
 		QUERY_ERROR_IF(!GamemasterOutfit, 14);
 	}
 
+	TCharacterGuildData GuildData;
+	QUERY_STOP_IF(!GetCharacterGuildData(Database, Character.CharacterID, &GuildData));
+
 	DynamicArray<TAccountBuddy> Buddies;
 	QUERY_STOP_IF(!GetBuddies(Database, Query->WorldID, Account.AccountID, &Buddies));
 
@@ -704,9 +707,9 @@ static void LoginGameTx(TDatabase *Database, TQuery *Query,
 	Response->Write32((uint32)Character.CharacterID);
 	Response->WriteString(Character.Name);
 	Response->Write8((uint8)Character.Sex);
-	Response->WriteString(Character.Guild);
-	Response->WriteString(Character.Rank);
-	Response->WriteString(Character.Title);
+	Response->WriteString(GuildData.GuildName);
+	Response->WriteString(GuildData.RankName);
+	Response->WriteString(GuildData.Title);
 
 	int NumBuddies = std::min<int>(Buddies.Length(), UINT8_MAX);
 	Response->Write8((uint8)NumBuddies);
@@ -1478,15 +1481,18 @@ void ProcessGetCharacterProfile(TDatabase *Database, TQuery *Query){
 
 	TCharacterProfile Character;
 	QUERY_STOP_IF(!GetCharacterProfile(Database, CharacterName, &Character));
-	QUERY_ERROR_IF(!StringEqCI(Character.Name, CharacterName), 1);
+	QUERY_ERROR_IF(Character.CharacterID == 0, 1);
+
+	TCharacterGuildData GuildData;
+	QUERY_STOP_IF(!GetCharacterGuildData(Database, Character.CharacterID, &GuildData));
 
 	TWriteBuffer *Response = QueryBeginResponse(Query, QUERY_STATUS_OK);
 	Response->WriteString(Character.Name);
 	Response->WriteString(Character.World);
 	Response->Write8((uint8)Character.Sex);
-	Response->WriteString(Character.Guild);
-	Response->WriteString(Character.Rank);
-	Response->WriteString(Character.Title);
+	Response->WriteString(GuildData.GuildName);
+	Response->WriteString(GuildData.RankName);
+	Response->WriteString(GuildData.Title);
 	Response->Write16((uint16)Character.Level);
 	Response->WriteString(Character.Profession);
 	Response->WriteString(Character.Residence);

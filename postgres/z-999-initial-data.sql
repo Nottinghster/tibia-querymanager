@@ -1,5 +1,7 @@
--- NOTE(fusion): This file contains sample initial data. It's wrapped into a
+-- NOTE(fusion): This file contains sample initial data. It's put inside a
 -- transaction to avoid errors from leaving the database in some partial state.
+--==============================================================================
+
 BEGIN;
 
 -- 111111/tibia

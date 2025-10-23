@@ -2,6 +2,8 @@
 -- the database in some partial state. Also, notice we don't use `IF NOT EXISTS`
 -- because it could also leave the database in a bad state if for example, some
 -- old version of a table already existed.
+--==============================================================================
+
 BEGIN;
 
 -- IMPORTANT(fusion): PosgreSQL doesn't have a defined `NOCASE` collation like
@@ -78,9 +80,6 @@ CREATE TABLE Characters (
     AccountID INTEGER NOT NULL,
     Name TEXT NOT NULL COLLATE NOCASE,
     Sex SMALLINT NOT NULL,
-    Guild TEXT NOT NULL COLLATE NOCASE DEFAULT '',
-    Rank TEXT NOT NULL COLLATE NOCASE DEFAULT '',
-    Title TEXT NOT NULL DEFAULT '',
     Level SMALLINT NOT NULL DEFAULT 0,
     Profession TEXT NOT NULL DEFAULT '',
     Residence TEXT NOT NULL DEFAULT '',
@@ -93,7 +92,6 @@ CREATE TABLE Characters (
 );
 CREATE INDEX CharactersWorldIndex   ON Characters(WorldID, IsOnline);
 CREATE INDEX CharactersAccountIndex ON Characters(AccountID, IsOnline);
-CREATE INDEX CharactersGuildIndex   ON Characters(Guild, Rank);
 
 -- NOTE(fusion): It seems `RIGHT` is a reserved keyword and trying to use
 -- it as a column name will generate an error.
@@ -135,6 +133,46 @@ CREATE TABLE LoginAttempts (
 );
 CREATE INDEX LoginAttemptsAccountIndex ON LoginAttempts(AccountID, Timestamp);
 CREATE INDEX LoginAttemptsAddressIndex ON LoginAttempts(IPAddress, Timestamp);
+
+-- Guild Tables
+--==============================================================================
+CREATE TABLE Guilds (
+    WorldID INTEGER NOT NULL,
+    GuildID INTEGER NOT NULL GENERATED ALWAYS AS IDENTITY,
+    Name TEXT NOT NULL COLLATE NOCASE,
+    LeaderID INTEGER NOT NULL,
+    Created TIMESTAMPTZ NOT NULL,
+    PRIMARY KEY (GuildID),
+    UNIQUE (Name),
+    UNIQUE (LeaderID)
+);
+
+CREATE TABLE GuildRanks (
+    GuildID INTEGER NOT NULL,
+    Rank SMALLINT NOT NULL,
+    Name TEXT NOT NULL,
+    PRIMARY KEY (GuildID, Rank)
+);
+
+CREATE TABLE GuildMembers (
+    GuildID INTEGER NOT NULL,
+    CharacterID INTEGER NOT NULL,
+    Rank SMALLINT NOT NULL,
+    Title TEXT NOT NULL,
+    Joined TIMESTAMPTZ NOT NULL,
+    PRIMARY KEY (CharacterID)
+);
+CREATE INDEX GuildMembersGuildIndex ON GuildMembers(GuildID, Rank);
+
+CREATE TABLE GuildInvites (
+    GuildID INTEGER NOT NULL,
+    CharacterID INTEGER NOT NULL,
+    RecruiterID INTEGER NOT NULL,
+    Timestamp TIMESTAMPTZ NOT NULL,
+    PRIMARY KEY (GuildID, CharacterID)
+);
+CREATE INDEX GuildInvitesCharacterIndex ON GuildInvites(CharacterID);
+CREATE INDEX GuildInvitesRecruiterIndex ON GuildInvites(RecruiterID);
 
 -- House Tables
 --==============================================================================
