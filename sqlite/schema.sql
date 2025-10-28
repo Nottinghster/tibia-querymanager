@@ -94,8 +94,9 @@ CREATE TABLE CharacterDeaths (
 	Unjustified INTEGER NOT NULL,
 	Timestamp INTEGER NOT NULL
 );
-CREATE INDEX CharacterDeathsCharacterIndex ON CharacterDeaths(CharacterID, Level);
-CREATE INDEX CharacterDeathsOffenderIndex  ON CharacterDeaths(OffenderID, Unjustified);
+CREATE INDEX CharacterDeathsCharacterIndex ON CharacterDeaths(CharacterID, Timestamp);
+CREATE INDEX CharacterDeathsOffenderIndex  ON CharacterDeaths(OffenderID, Timestamp);
+CREATE INDEX CharacterDeathsTimeIndex      ON CharacterDeaths(Timestamp);
 
 CREATE TABLE Buddies (
 	WorldID INTEGER NOT NULL,
