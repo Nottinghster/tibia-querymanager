@@ -518,16 +518,18 @@ static void CheckAccountPasswordTx(TDatabase *Database, TQuery *Query,
 	TransactionScope Tx("CheckAccountPassword");
 	QUERY_STOP_IF(!Tx.Begin(Database));
 
+	// IMPORTANT(fusion): Disallow blocked IP addresses and accounts early to
+	// prevent error messages from being used to brute force passwords.
+	int FailedLoginAttempts;
+	QUERY_STOP_IF(!GetIPAddressFailedLoginAttempts(Database, IPAddress, 30 * 60, &FailedLoginAttempts));
+	QUERY_ERROR_IF(FailedLoginAttempts > 20, 4);
+	QUERY_STOP_IF(!GetAccountFailedLoginAttempts(Database, AccountID, 5 * 60, &FailedLoginAttempts));
+	QUERY_ERROR_IF(FailedLoginAttempts > 10, 3);
+
 	TAccount Account;
 	QUERY_STOP_IF(!GetAccountData(Database, AccountID, &Account));
 	QUERY_ERROR_IF(Account.AccountID == 0, 1);
 	QUERY_ERROR_IF(!TestPassword(Account.Auth, sizeof(Account.Auth), Password), 2);
-
-	int FailedLoginAttempts;
-	QUERY_STOP_IF(!GetAccountFailedLoginAttempts(Database, Account.AccountID, 5 * 60, &FailedLoginAttempts));
-	QUERY_ERROR_IF(FailedLoginAttempts > 10, 3);
-	QUERY_STOP_IF(!GetIPAddressFailedLoginAttempts(Database, IPAddress, 30 * 60, &FailedLoginAttempts));
-	QUERY_ERROR_IF(FailedLoginAttempts > 20, 4);
 
 	QUERY_STOP_IF(!Tx.Commit());
 	QueryOk(Query);
@@ -558,16 +560,18 @@ static void LoginAccountTx(TDatabase *Database, TQuery *Query,
 	TransactionScope Tx("LoginAccount");
 	QUERY_STOP_IF(!Tx.Begin(Database));
 
+	// IMPORTANT(fusion): Disallow blocked IP addresses and accounts early to
+	// prevent error messages from being used to brute force passwords.
+	int FailedLoginAttempts;
+	QUERY_STOP_IF(!GetIPAddressFailedLoginAttempts(Database, IPAddress, 30 * 60, &FailedLoginAttempts));
+	QUERY_ERROR_IF(FailedLoginAttempts > 20, 4);
+	QUERY_STOP_IF(!GetAccountFailedLoginAttempts(Database, AccountID, 5 * 60, &FailedLoginAttempts));
+	QUERY_ERROR_IF(FailedLoginAttempts > 10, 3);
+
 	TAccount Account;
 	QUERY_STOP_IF(!GetAccountData(Database, AccountID, &Account));
 	QUERY_ERROR_IF(Account.AccountID == 0, 1);
 	QUERY_ERROR_IF(!TestPassword(Account.Auth, sizeof(Account.Auth), Password), 2);
-
-	int FailedLoginAttempts;
-	QUERY_STOP_IF(!GetAccountFailedLoginAttempts(Database, Account.AccountID, 5 * 60, &FailedLoginAttempts));
-	QUERY_ERROR_IF(FailedLoginAttempts > 10, 3);
-	QUERY_STOP_IF(!GetIPAddressFailedLoginAttempts(Database, IPAddress, 30 * 60, &FailedLoginAttempts));
-	QUERY_ERROR_IF(FailedLoginAttempts > 20, 4);
 
 	bool IsBanished;
 	QUERY_STOP_IF(!IsAccountBanished(Database, Account.AccountID, &IsBanished));
@@ -628,6 +632,14 @@ static void LoginGameTx(TDatabase *Database, TQuery *Query,
 	TransactionScope Tx("LoginGame");
 	QUERY_STOP_IF(!Tx.Begin(Database));
 
+	// IMPORTANT(fusion): Disallow blocked IP addresses and accounts early to
+	// prevent error messages from being used to brute force passwords.
+	int FailedLoginAttempts;
+	QUERY_STOP_IF(!GetIPAddressFailedLoginAttempts(Database, IPAddress, 30 * 60, &FailedLoginAttempts));
+	QUERY_ERROR_IF(FailedLoginAttempts > 20, 9);
+	QUERY_STOP_IF(!GetAccountFailedLoginAttempts(Database, AccountID, 5 * 60, &FailedLoginAttempts));
+	QUERY_ERROR_IF(FailedLoginAttempts > 10, 7);
+
 	TCharacterLoginData Character;
 	QUERY_STOP_IF(!GetCharacterLoginData(Database, CharacterName, &Character));
 	QUERY_ERROR_IF(Character.CharacterID == 0, 1);
@@ -645,12 +657,6 @@ static void LoginGameTx(TDatabase *Database, TQuery *Query,
 	QUERY_ERROR_IF(Account.AccountID == 0 || Account.AccountID != Character.AccountID, 15);
 	QUERY_ERROR_IF(Account.Deleted, 8);
 	QUERY_ERROR_IF(!TestPassword(Account.Auth, sizeof(Account.Auth), Password), 6);
-
-	int FailedLoginAttempts;
-	QUERY_STOP_IF(!GetAccountFailedLoginAttempts(Database, Account.AccountID, 5 * 60, &FailedLoginAttempts));
-	QUERY_ERROR_IF(FailedLoginAttempts > 10, 7);
-	QUERY_STOP_IF(!GetIPAddressFailedLoginAttempts(Database, IPAddress, 30 * 60, &FailedLoginAttempts));
-	QUERY_ERROR_IF(FailedLoginAttempts > 20, 9);
 
 	bool IsBanished;
 	QUERY_STOP_IF(!IsAccountBanished(Database, Account.AccountID, &IsBanished));
