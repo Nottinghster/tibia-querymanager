@@ -515,21 +515,35 @@ void ProcessInternalResolveWorld(TDatabase *Database, TQuery *Query){
 
 static void CheckAccountPasswordTx(TDatabase *Database, TQuery *Query,
 		int AccountID, const char *Password, int IPAddress){
+	enum{
+		E_ACCOUNT_NOT_FOUND = 1,
+		E_PASSWORD_MISMATCH = 2,
+		E_ACCOUNT_DISABLED = 3,
+		E_IPADDRESS_BLOCKED = 4,
+	};
+
+	// IMPORTANT(fusion): Check whether credentials are empty, in which case
+	// we can skip accessing the database altogether, but also prevent errors
+	// such as "ip-address blocked" or "account disabled" for account id ZERO.
+	QUERY_ERROR_IF(AccountID == 0, E_ACCOUNT_NOT_FOUND);
+	QUERY_ERROR_IF(StringEmpty(Password), E_PASSWORD_MISMATCH);
+
 	TransactionScope Tx("CheckAccountPassword");
 	QUERY_STOP_IF(!Tx.Begin(Database));
 
-	// IMPORTANT(fusion): Disallow blocked IP addresses and accounts early to
-	// prevent error messages from being used to brute force passwords.
+	// IMPORTANT(fusion): Disallow blocked IP addresses and accounts before
+	// checking credentials to prevent error messages from being used as an
+	// oracle for brute force attacks.
 	int FailedLoginAttempts;
 	QUERY_STOP_IF(!GetIPAddressFailedLoginAttempts(Database, IPAddress, 30 * 60, &FailedLoginAttempts));
-	QUERY_ERROR_IF(FailedLoginAttempts > 20, 4);
+	QUERY_ERROR_IF(FailedLoginAttempts >= 20, E_IPADDRESS_BLOCKED);
 	QUERY_STOP_IF(!GetAccountFailedLoginAttempts(Database, AccountID, 5 * 60, &FailedLoginAttempts));
-	QUERY_ERROR_IF(FailedLoginAttempts > 10, 3);
+	QUERY_ERROR_IF(FailedLoginAttempts >= 10, E_ACCOUNT_DISABLED);
 
 	TAccount Account;
 	QUERY_STOP_IF(!GetAccountData(Database, AccountID, &Account));
-	QUERY_ERROR_IF(Account.AccountID == 0, 1);
-	QUERY_ERROR_IF(!TestPassword(Account.Auth, sizeof(Account.Auth), Password), 2);
+	QUERY_ERROR_IF(Account.AccountID == 0, E_ACCOUNT_NOT_FOUND);
+	QUERY_ERROR_IF(!TestPassword(Account.Auth, sizeof(Account.Auth), Password), E_PASSWORD_MISMATCH);
 
 	QUERY_STOP_IF(!Tx.Commit());
 	QueryOk(Query);
@@ -557,27 +571,43 @@ void ProcessCheckAccountPassword(TDatabase *Database, TQuery *Query){
 
 static void LoginAccountTx(TDatabase *Database, TQuery *Query,
 		int AccountID, const char *Password, int IPAddress){
+	enum{
+		E_ACCOUNT_NOT_FOUND = 1,
+		E_PASSWORD_MISMATCH = 2,
+		E_ACCOUNT_DISABLED = 3,
+		E_IPADDRESS_BLOCKED = 4,
+		E_ACCOUNT_BANISHED = 5,
+		E_IPADDRESS_BANISHED = 6,
+	};
+
+	// IMPORTANT(fusion): Check whether credentials are empty, in which case
+	// we can skip accessing the database altogether, but also prevent errors
+	// such as "ip-address blocked" or "account disabled" for account id ZERO.
+	QUERY_ERROR_IF(AccountID == 0, E_ACCOUNT_NOT_FOUND);
+	QUERY_ERROR_IF(StringEmpty(Password), E_PASSWORD_MISMATCH);
+
 	TransactionScope Tx("LoginAccount");
 	QUERY_STOP_IF(!Tx.Begin(Database));
 
-	// IMPORTANT(fusion): Disallow blocked IP addresses and accounts early to
-	// prevent error messages from being used to brute force passwords.
+	// IMPORTANT(fusion): Disallow blocked IP addresses and accounts before
+	// checking credentials to prevent error messages from being used as an
+	// oracle for brute force attacks.
 	int FailedLoginAttempts;
 	QUERY_STOP_IF(!GetIPAddressFailedLoginAttempts(Database, IPAddress, 30 * 60, &FailedLoginAttempts));
-	QUERY_ERROR_IF(FailedLoginAttempts > 20, 4);
+	QUERY_ERROR_IF(FailedLoginAttempts >= 20, E_IPADDRESS_BLOCKED);
 	QUERY_STOP_IF(!GetAccountFailedLoginAttempts(Database, AccountID, 5 * 60, &FailedLoginAttempts));
-	QUERY_ERROR_IF(FailedLoginAttempts > 10, 3);
+	QUERY_ERROR_IF(FailedLoginAttempts >= 10, E_ACCOUNT_DISABLED);
 
 	TAccount Account;
 	QUERY_STOP_IF(!GetAccountData(Database, AccountID, &Account));
-	QUERY_ERROR_IF(Account.AccountID == 0, 1);
-	QUERY_ERROR_IF(!TestPassword(Account.Auth, sizeof(Account.Auth), Password), 2);
+	QUERY_ERROR_IF(Account.AccountID == 0, E_ACCOUNT_NOT_FOUND);
+	QUERY_ERROR_IF(!TestPassword(Account.Auth, sizeof(Account.Auth), Password), E_PASSWORD_MISMATCH);
 
 	bool IsBanished;
 	QUERY_STOP_IF(!IsAccountBanished(Database, Account.AccountID, &IsBanished));
-	QUERY_ERROR_IF(IsBanished, 5);
+	QUERY_ERROR_IF(IsBanished, E_ACCOUNT_BANISHED);
 	QUERY_STOP_IF(!IsIPBanished(Database, IPAddress, &IsBanished));
-	QUERY_ERROR_IF(IsBanished, 6);
+	QUERY_ERROR_IF(IsBanished, E_IPADDRESS_BANISHED);
 
 	DynamicArray<TCharacterEndpoint> Characters;
 	QUERY_STOP_IF(!GetCharacterEndpoints(Database, Account.AccountID, &Characters));
@@ -629,42 +659,66 @@ void ProcessLoginAccount(TDatabase *Database, TQuery *Query){
 static void LoginGameTx(TDatabase *Database, TQuery *Query,
 		int AccountID, const char *CharacterName, const char *Password,
 		int IPAddress, bool PrivateWorld, bool GamemasterRequired){
+	enum{
+		E_CHARACTER_NOT_FOUND = 1,
+		E_CHARACTER_DELETED = 2,
+		E_CHARACTER_WORLD_MISMATCH = 3,
+		E_CHARACTER_NOT_INVITED = 4,
+		E_PASSWORD_MISMATCH = 6,
+		E_ACCOUNT_DISABLED = 7,
+		E_ACCOUNT_DELETED = 8,
+		E_IPADDRESS_BLOCKED = 9,
+		E_ACCOUNT_BANISHED = 10,
+		E_CHARACTER_BANISHED = 11,
+		E_IPADDRESS_BANISHED = 12,
+		E_ACCOUNT_BUSY = 13,
+		E_ACCOUNT_NOT_GAMEMASTER = 14,
+		E_ACCOUNT_INVALID = 15,
+	};
+
+	// IMPORTANT(fusion): Check whether credentials are empty, in which case
+	// we can skip accessing the database altogether, but also prevent errors
+	// such as "ip-address blocked" or "account disabled" for account id ZERO.
+	QUERY_ERROR_IF(AccountID == 0, E_ACCOUNT_INVALID);
+	QUERY_ERROR_IF(StringEmpty(CharacterName), E_CHARACTER_NOT_FOUND);
+	QUERY_ERROR_IF(StringEmpty(Password), E_PASSWORD_MISMATCH);
+
 	TransactionScope Tx("LoginGame");
 	QUERY_STOP_IF(!Tx.Begin(Database));
 
-	// IMPORTANT(fusion): Disallow blocked IP addresses and accounts early to
-	// prevent error messages from being used to brute force passwords.
+	// IMPORTANT(fusion): Disallow blocked IP addresses and accounts before
+	// checking credentials to prevent error messages from being used as an
+	// oracle for brute force attacks.
 	int FailedLoginAttempts;
 	QUERY_STOP_IF(!GetIPAddressFailedLoginAttempts(Database, IPAddress, 30 * 60, &FailedLoginAttempts));
-	QUERY_ERROR_IF(FailedLoginAttempts > 20, 9);
+	QUERY_ERROR_IF(FailedLoginAttempts >= 20, E_IPADDRESS_BLOCKED);
 	QUERY_STOP_IF(!GetAccountFailedLoginAttempts(Database, AccountID, 5 * 60, &FailedLoginAttempts));
-	QUERY_ERROR_IF(FailedLoginAttempts > 10, 7);
+	QUERY_ERROR_IF(FailedLoginAttempts >= 10, E_ACCOUNT_DISABLED);
 
 	TCharacterLoginData Character;
 	QUERY_STOP_IF(!GetCharacterLoginData(Database, CharacterName, &Character));
-	QUERY_ERROR_IF(Character.CharacterID == 0, 1);
-	QUERY_ERROR_IF(Character.Deleted, 2);
-	QUERY_ERROR_IF(Character.WorldID != Query->WorldID, 3);
+	QUERY_ERROR_IF(Character.CharacterID == 0, E_CHARACTER_NOT_FOUND);
+	QUERY_ERROR_IF(Character.Deleted, E_CHARACTER_DELETED);
+	QUERY_ERROR_IF(Character.WorldID != Query->WorldID, E_CHARACTER_WORLD_MISMATCH);
 	if(PrivateWorld){
 		bool Invited;
 		QUERY_STOP_IF(!GetWorldInvitation(Database, Query->WorldID, Character.CharacterID, &Invited));
-		QUERY_ERROR_IF(!Invited, 4);
+		QUERY_ERROR_IF(!Invited, E_CHARACTER_NOT_INVITED);
 	}
 
 	TAccount Account;
 	QUERY_STOP_IF(!GetAccountData(Database, AccountID, &Account));
-	// NOTE(fusion): This is correct, there is no error code 5.
-	QUERY_ERROR_IF(Account.AccountID == 0 || Account.AccountID != Character.AccountID, 15);
-	QUERY_ERROR_IF(Account.Deleted, 8);
-	QUERY_ERROR_IF(!TestPassword(Account.Auth, sizeof(Account.Auth), Password), 6);
+	QUERY_ERROR_IF(Account.AccountID == 0 || Account.AccountID != Character.AccountID, E_ACCOUNT_INVALID);
+	QUERY_ERROR_IF(Account.Deleted, E_ACCOUNT_DELETED);
+	QUERY_ERROR_IF(!TestPassword(Account.Auth, sizeof(Account.Auth), Password), E_PASSWORD_MISMATCH);
 
 	bool IsBanished;
 	QUERY_STOP_IF(!IsAccountBanished(Database, Account.AccountID, &IsBanished));
-	QUERY_ERROR_IF(IsBanished, 10);
+	QUERY_ERROR_IF(IsBanished, E_ACCOUNT_BANISHED);
 	QUERY_STOP_IF(!IsCharacterNamelocked(Database, Character.CharacterID, &IsBanished));
-	QUERY_ERROR_IF(IsBanished, 11);
+	QUERY_ERROR_IF(IsBanished, E_CHARACTER_BANISHED);
 	QUERY_STOP_IF(!IsIPBanished(Database, IPAddress, &IsBanished));
-	QUERY_ERROR_IF(IsBanished, 12);
+	QUERY_ERROR_IF(IsBanished, E_IPADDRESS_BANISHED);
 
 	// TODO(fusion): Probably merge these into a single operation?
 	bool MultiClient;
@@ -675,14 +729,17 @@ static void LoginGameTx(TDatabase *Database, TQuery *Query,
 		if(OnlineCharacters > 0){
 			bool IsOnline;
 			QUERY_STOP_IF(!IsCharacterOnline(Database, Character.CharacterID, &IsOnline));
-			QUERY_ERROR_IF(!IsOnline, 13);
+			QUERY_ERROR_IF(!IsOnline, E_ACCOUNT_BUSY);
 		}
 	}
 
+	// TODO(fusion): This may have been related to account rights but at the moment
+	// we only have character specific rights. May also use `READ_GAMEMASTER_CHANNEL`
+	// rather than `GAMEMASTER_OUTFIT`.
 	if(GamemasterRequired){
 		bool GamemasterOutfit;
 		QUERY_STOP_IF(!GetCharacterRight(Database, Character.CharacterID, "GAMEMASTER_OUTFIT", &GamemasterOutfit));
-		QUERY_ERROR_IF(!GamemasterOutfit, 14);
+		QUERY_ERROR_IF(!GamemasterOutfit, E_ACCOUNT_NOT_GAMEMASTER);
 	}
 
 	TCharacterGuildData GuildData;
@@ -782,6 +839,13 @@ void ProcessLogoutGame(TDatabase *Database, TQuery *Query){
 }
 
 void ProcessSetNamelock(TDatabase *Database, TQuery *Query){
+	enum{
+		E_NOT_FOUND = 1,
+		E_NO_BANISHMENT = 2,
+		E_NAME_LOCKED = 3,
+		E_NAME_APPROVED = 4,
+	};
+
 	TReadBuffer Request = Query->Request;
 
 	char CharacterName[30];
@@ -802,16 +866,15 @@ void ProcessSetNamelock(TDatabase *Database, TQuery *Query){
 
 	int CharacterID;
 	QUERY_STOP_IF(!GetCharacterID(Database, Query->WorldID, CharacterName, &CharacterID));
-	QUERY_ERROR_IF(CharacterID == 0, 1);
+	QUERY_ERROR_IF(CharacterID == 0, E_NOT_FOUND);
 
-	// TODO(fusion): Might be `NO_BANISHMENT`.
-	bool Namelock;
-	QUERY_STOP_IF(!GetCharacterRight(Database, CharacterID, "NAMELOCK", &Namelock));
-	QUERY_ERROR_IF(Namelock, 2);
+	bool NoBanishment;
+	QUERY_STOP_IF(!GetCharacterRight(Database, CharacterID, "NO_BANISHMENT", &NoBanishment));
+	QUERY_ERROR_IF(NoBanishment, E_NO_BANISHMENT);
 
 	TNamelockStatus Status;
 	QUERY_STOP_IF(!GetNamelockStatus(Database, CharacterID, &Status));
-	QUERY_ERROR_IF(Status.Namelocked, (Status.Approved ? 4 : 3));
+	QUERY_ERROR_IF(Status.Namelocked, (Status.Approved ? E_NAME_APPROVED : E_NAME_LOCKED));
 
 	QUERY_STOP_IF(!InsertNamelock(Database, CharacterID, IPAddress, GamemasterID, Reason, Comment));
 	QUERY_STOP_IF(!Tx.Commit());
@@ -819,6 +882,12 @@ void ProcessSetNamelock(TDatabase *Database, TQuery *Query){
 }
 
 void ProcessBanishAccount(TDatabase *Database, TQuery *Query){
+	enum{
+		E_NOT_FOUND = 1,
+		E_NO_BANISHMENT = 2,
+		E_BANISHED = 3,
+	};
+
 	TReadBuffer Request = Query->Request;
 
 	char CharacterName[30];
@@ -840,16 +909,15 @@ void ProcessBanishAccount(TDatabase *Database, TQuery *Query){
 
 	int CharacterID;
 	QUERY_STOP_IF(!GetCharacterID(Database, Query->WorldID, CharacterName, &CharacterID));
-	QUERY_ERROR_IF(CharacterID == 0, 1);
+	QUERY_ERROR_IF(CharacterID == 0, E_NOT_FOUND);
 
-	// TODO(fusion): Might be `NO_BANISHMENT`.
-	bool Banishment;
-	QUERY_STOP_IF(!GetCharacterRight(Database, CharacterID, "BANISHMENT", &Banishment));
-	QUERY_ERROR_IF(Banishment, 2);
+	bool NoBanishment;
+	QUERY_STOP_IF(!GetCharacterRight(Database, CharacterID, "NO_BANISHMENT", &NoBanishment));
+	QUERY_ERROR_IF(NoBanishment, E_NO_BANISHMENT);
 
 	TBanishmentStatus Status;
 	QUERY_STOP_IF(!GetBanishmentStatus(Database, CharacterID, &Status));
-	QUERY_ERROR_IF(Status.Banished, 3);
+	QUERY_ERROR_IF(Status.Banished, E_BANISHED);
 
 	int Days = 7;
 	int BanishmentID = 0;
@@ -867,6 +935,11 @@ void ProcessBanishAccount(TDatabase *Database, TQuery *Query){
 }
 
 void ProcessSetNotation(TDatabase *Database, TQuery *Query){
+	enum{
+		E_NOT_FOUND = 1,
+		E_NO_BANISHMENT = 2,
+	};
+
 	TReadBuffer Request = Query->Request;
 
 	char CharacterName[30];
@@ -887,12 +960,11 @@ void ProcessSetNotation(TDatabase *Database, TQuery *Query){
 
 	int CharacterID;
 	QUERY_STOP_IF(!GetCharacterID(Database, Query->WorldID, CharacterName, &CharacterID));
-	QUERY_ERROR_IF(CharacterID == 0, 1);
+	QUERY_ERROR_IF(CharacterID == 0, E_NOT_FOUND);
 
-	// TODO(fusion): Might be `NO_BANISHMENT`.
-	bool Notation;
-	QUERY_STOP_IF(!GetCharacterRight(Database, CharacterID, "NOTATION", &Notation));
-	QUERY_ERROR_IF(Notation, 2);
+	bool NoBanishment;
+	QUERY_STOP_IF(!GetCharacterRight(Database, CharacterID, "NO_BANISHMENT", &NoBanishment));
+	QUERY_ERROR_IF(NoBanishment, E_NO_BANISHMENT);
 
 	int Notations = 0;
 	int BanishmentID = 0;
@@ -917,6 +989,11 @@ void ProcessSetNotation(TDatabase *Database, TQuery *Query){
 }
 
 void ProcessReportStatement(TDatabase *Database, TQuery *Query){
+	enum{
+		E_NOT_FOUND = 1,
+		E_REPORTED = 2,
+	};
+
 	TReadBuffer Request = Query->Request;
 
 	char CharacterName[30];
@@ -971,7 +1048,7 @@ void ProcessReportStatement(TDatabase *Database, TQuery *Query){
 
 	int CharacterID;
 	QUERY_STOP_IF(!GetCharacterID(Database, Query->WorldID, CharacterName, &CharacterID));
-	QUERY_ERROR_IF(CharacterID == 0, 1);
+	QUERY_ERROR_IF(CharacterID == 0, E_NOT_FOUND);
 
 	if(ReportedStatement->CharacterID != CharacterID){
 		LOG_ERR("Reported statement character mismatch");
@@ -981,7 +1058,7 @@ void ProcessReportStatement(TDatabase *Database, TQuery *Query){
 
 	bool IsReported;
 	QUERY_STOP_IF(!IsStatementReported(Database, Query->WorldID, ReportedStatement, &IsReported));
-	QUERY_ERROR_IF(IsReported, 2);
+	QUERY_ERROR_IF(IsReported, E_REPORTED);
 
 	QUERY_STOP_IF(!InsertStatements(Database, Query->WorldID, NumStatements, Statements));
 	QUERY_STOP_IF(!InsertReportedStatement(Database, Query->WorldID, ReportedStatement,
@@ -991,6 +1068,11 @@ void ProcessReportStatement(TDatabase *Database, TQuery *Query){
 }
 
 void ProcessBanishIpAddress(TDatabase *Database, TQuery *Query){
+	enum{
+		E_NOT_FOUND = 1,
+		E_NO_BANISHMENT = 2,
+	};
+
 	TReadBuffer Request = Query->Request;
 
 	char CharacterName[30];
@@ -1011,12 +1093,11 @@ void ProcessBanishIpAddress(TDatabase *Database, TQuery *Query){
 
 	int CharacterID;
 	QUERY_STOP_IF(!GetCharacterID(Database, Query->WorldID, CharacterName, &CharacterID));
-	QUERY_ERROR_IF(CharacterID == 0, 1);
+	QUERY_ERROR_IF(CharacterID == 0, E_NOT_FOUND);
 
-	// TODO(fusion): Might be `NO_BANISHMENT`.
-	bool IPBanishment;
-	QUERY_STOP_IF(!GetCharacterRight(Database, CharacterID, "IP_BANISHMENT", &IPBanishment));
-	QUERY_ERROR_IF(IPBanishment, 2);
+	bool NoBanishment;
+	QUERY_STOP_IF(!GetCharacterRight(Database, CharacterID, "NO_BANISHMENT", &NoBanishment));
+	QUERY_ERROR_IF(NoBanishment, E_NO_BANISHMENT);
 
 	// IMPORTANT(fusion): It is not a good idea to ban IP addresses, specially V4,
 	// as they may be dynamically assigned or represent the address of a public ISP
@@ -1380,6 +1461,11 @@ void ProcessLoadWorldConfig(TDatabase *Database, TQuery *Query){
 }
 
 void ProcessCreateAccount(TDatabase *Database, TQuery *Query){
+	enum{
+		E_ACCOUNT_NUMBER_EXISTS = 1,
+		E_ACCOUNT_EMAIL_EXISTS = 2,
+	};
+
 	// TODO(fusion): We'd ideally want to automatically generate an account number
 	// and return it in case of success but that would also require a more robust
 	// website infrastructure with verification e-mails, etc...
@@ -1403,9 +1489,9 @@ void ProcessCreateAccount(TDatabase *Database, TQuery *Query){
 
 	bool AccountExists;
 	QUERY_STOP_IF(!AccountNumberExists(Database, AccountID, &AccountExists));
-	QUERY_ERROR_IF(AccountExists, 1);
+	QUERY_ERROR_IF(AccountExists, E_ACCOUNT_NUMBER_EXISTS);
 	QUERY_STOP_IF(!AccountEmailExists(Database, Email, &AccountExists));
-	QUERY_ERROR_IF(AccountExists, 2);
+	QUERY_ERROR_IF(AccountExists, E_ACCOUNT_EMAIL_EXISTS);
 
 	QUERY_STOP_IF(!CreateAccount(Database, AccountID, Email, Auth, sizeof(Auth)));
 	QUERY_STOP_IF(!Tx.Commit());
@@ -1413,6 +1499,12 @@ void ProcessCreateAccount(TDatabase *Database, TQuery *Query){
 }
 
 void ProcessCreateCharacter(TDatabase *Database, TQuery *Query){
+	enum{
+		E_WORLD_NOT_FOUND = 1,
+		E_ACCOUNT_NOT_FOUND = 2,
+		E_CHARACTER_NAME_EXISTS = 3,
+	};
+
 	char WorldName[30];
 	char CharacterName[30];
 	TReadBuffer Request = Query->Request;
@@ -1432,15 +1524,15 @@ void ProcessCreateCharacter(TDatabase *Database, TQuery *Query){
 
 	int WorldID;
 	QUERY_STOP_IF(!GetWorldID(Database, WorldName, &WorldID));
-	QUERY_ERROR_IF(WorldID == 0, 1);
+	QUERY_ERROR_IF(WorldID == 0, E_WORLD_NOT_FOUND);
 
 	bool AccountExists;
 	QUERY_STOP_IF(!AccountNumberExists(Database, AccountID, &AccountExists));
-	QUERY_ERROR_IF(!AccountExists, 2);
+	QUERY_ERROR_IF(!AccountExists, E_ACCOUNT_NOT_FOUND);
 
 	bool CharacterExists;
 	QUERY_STOP_IF(!CharacterNameExists(Database, CharacterName, &CharacterExists));
-	QUERY_ERROR_IF(CharacterExists, 3);
+	QUERY_ERROR_IF(CharacterExists, E_CHARACTER_NAME_EXISTS);
 
 	QUERY_STOP_IF(!CreateCharacter(Database, WorldID, AccountID, CharacterName, Sex));
 	QUERY_STOP_IF(!Tx.Commit());
@@ -1479,6 +1571,10 @@ void ProcessGetAccountSummary(TDatabase *Database, TQuery *Query){
 }
 
 void ProcessGetCharacterProfile(TDatabase *Database, TQuery *Query){
+	enum{
+		E_CHARACTER_NOT_FOUND = 1,
+	};
+
 	char CharacterName[30];
 	TReadBuffer Request = Query->Request;
 	Request.ReadString(CharacterName, sizeof(CharacterName));
@@ -1487,7 +1583,7 @@ void ProcessGetCharacterProfile(TDatabase *Database, TQuery *Query){
 
 	TCharacterProfile Character;
 	QUERY_STOP_IF(!GetCharacterProfile(Database, CharacterName, &Character));
-	QUERY_ERROR_IF(Character.CharacterID == 0, 1);
+	QUERY_ERROR_IF(Character.CharacterID == 0, E_CHARACTER_NOT_FOUND);
 
 	TCharacterGuildData GuildData;
 	QUERY_STOP_IF(!GetCharacterGuildData(Database, Character.CharacterID, &GuildData));
